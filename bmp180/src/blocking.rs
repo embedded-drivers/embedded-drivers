@@ -41,8 +41,7 @@ impl<I2C: embedded_hal::i2c::I2c> BMP180<I2C> {
     }
 
     /// read uncompensated temperature value
-    #[inline]
-    fn read_ut<D: DelayNs>(&mut self, delay: &mut D) -> Result<i32, Error<I2C::Error>> {
+    pub fn read_raw_temperature<D: DelayNs>(&mut self, delay: &mut D) -> Result<i32, Error<I2C::Error>> {
         self.write_reg(regs::CONTROL, cmds::READTEMPCMD)?;
         delay.delay_ms(5);
 
@@ -54,7 +53,7 @@ impl<I2C: embedded_hal::i2c::I2c> BMP180<I2C> {
 
     /// read uncompensated pressure value
     #[inline]
-    fn read_up<D: DelayNs>(&mut self, delay: &mut D) -> Result<i32, Error<I2C::Error>> {
+    pub fn read_raw_pressure<D: DelayNs>(&mut self, delay: &mut D) -> Result<i32, Error<I2C::Error>> {
         let oss = self.mode.oversampling_settings();
         self.write_reg(regs::CONTROL, cmds::READPRESSURECMD + (oss << 6))?;
         delay.delay_ms(self.mode.conversion_delay_in_ms() as u32);
@@ -69,15 +68,15 @@ impl<I2C: embedded_hal::i2c::I2c> BMP180<I2C> {
 
     /// Calculate true temperature, resolution is 0.1C
     pub fn read_temperature<D: DelayNs>(&mut self, delay: &mut D) -> Result<f32, Error<I2C::Error>> {
-        let ut = self.read_ut(delay)?;
+        let ut = self.read_raw_temperature(delay)?;
 
         Ok(super::convert_temperature(ut, &self.calib))
     }
 
     /// Read temperature and pressure at once
     pub fn read_measurement<D: DelayNs>(&mut self, delay: &mut D) -> Result<Measurement, Error<I2C::Error>> {
-        let ut = self.read_ut(delay)?;
-        let up = self.read_up(delay)?;
+        let ut = self.read_raw_temperature(delay)?;
+        let up = self.read_raw_pressure(delay)?;
 
         let measure = super::convert_measurement(up, ut, &self.calib, self.mode);
 
