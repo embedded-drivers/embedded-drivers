@@ -148,13 +148,13 @@ impl<SPI: embedded_hal_async::spi::SpiDevice, DC: OutputPin> SSD1327<SPI, DC> {
     }
 
     async fn write_command(&mut self, cmd: &[u8]) -> Result<(), Error<SPI::Error>> {
-        let _ = self.dc.set_low().unwrap();
+        self.dc.set_low().unwrap();
         self.spi.write(cmd).await?;
         Ok(())
     }
 
     async fn write_data(&mut self, data: &[u8]) -> Result<(), Error<SPI::Error>> {
-        let _ = self.dc.set_high().unwrap();
+        self.dc.set_high().unwrap();
         self.spi.write(data).await?;
         let _ = self.dc.set_low();
         Ok(())

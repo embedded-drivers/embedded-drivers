@@ -76,6 +76,12 @@ pub struct CalibrationData {
     pub dig_h6: i8,
 }
 
+impl Default for CalibrationData {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CalibrationData {
     pub const fn new() -> Self {
         unsafe { core::mem::zeroed() }
@@ -277,10 +283,10 @@ fn convert_temperature(adc_t: i32, calib_data: &CalibrationData) -> (i32, i32) {
 #[inline]
 fn convert_pressure(adc_p: i32, t_fine: i32, calib_data: &CalibrationData) -> i32 {
     let mut var1 = t_fine as i64 - 128000;
-    let mut var2 = var1 * var1 as i64 * calib_data.dig_p6 as i64;
-    var2 = var2 + ((var1 * calib_data.dig_p5 as i64) << 17);
-    var2 = var2 + ((calib_data.dig_p4 as i64) << 35);
-    var1 = ((var1 * var1 as i64 * calib_data.dig_p3 as i64) >> 8) + ((var1 * calib_data.dig_p2 as i64) << 12);
+    let mut var2 = var1 * var1 * calib_data.dig_p6 as i64;
+    var2 += (var1 * calib_data.dig_p5 as i64) << 17;
+    var2 += (calib_data.dig_p4 as i64) << 35;
+    var1 = ((var1 * var1 * calib_data.dig_p3 as i64) >> 8) + ((var1 * calib_data.dig_p2 as i64) << 12);
     var1 = (((1i64 << 47) + var1) * (calib_data.dig_p1 as i64)) >> 33;
 
     let p = if var1 == 0 {
@@ -308,11 +314,11 @@ fn convert_humidity(adc_h: i32, t_fine: i32, calib_data: &CalibrationData) -> u3
     let dig_h5 = calib_data.dig_h5 as i32;
     let dig_h6 = calib_data.dig_h6 as i32;
 
-    let v_x1_u32r = (t_fine - 76800) as i32;
-    let v_x1_u32r = (((((adc_h << 14) - (dig_h4 << 20) - (dig_h5 * v_x1_u32r)) + 16384) >> 15)
+    let v_x1_u32r = t_fine - 76800;
+    let v_x1_u32r = ((((adc_h << 14) - (dig_h4 << 20) - (dig_h5 * v_x1_u32r)) + 16384) >> 15)
         * (((((((v_x1_u32r * (dig_h6)) >> 10) * (((v_x1_u32r * dig_h3) >> 11) + 32768)) >> 10) + 2097152) * dig_h2
             + 8192)
-            >> 14));
+            >> 14);
     let v_x1_u32r = v_x1_u32r - (((((v_x1_u32r >> 15) * (v_x1_u32r >> 15)) >> 7) * dig_h1) >> 4);
 
     // limit check

@@ -56,12 +56,12 @@ impl<I2C: embedded_hal::i2c::I2c> BMP180<I2C> {
     pub fn read_raw_pressure<D: DelayNs>(&mut self, delay: &mut D) -> Result<i32, Error<I2C::Error>> {
         let oss = self.mode.oversampling_settings();
         self.write_reg(regs::CONTROL, cmds::READPRESSURECMD + (oss << 6))?;
-        delay.delay_ms(self.mode.conversion_delay_in_ms() as u32);
+        delay.delay_ms(self.mode.conversion_delay_in_ms());
 
         let mut buf = [0u8; 3];
         self.i2c.write_read(self.addr, &[regs::PRESSUREDATA], &mut buf)?;
 
-        let up = ((buf[0] as i32) << 16) + ((buf[1] as i32) << 8) + (buf[2] as i32) >> (8 - oss);
+        let up = (((buf[0] as i32) << 16) + ((buf[1] as i32) << 8) + (buf[2] as i32)) >> (8 - oss);
 
         Ok(up)
     }

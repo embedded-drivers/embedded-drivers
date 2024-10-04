@@ -180,12 +180,12 @@ impl<I2C: embedded_hal_async::i2c::I2c> BMP180<I2C> {
         let oss = self.mode.oversampling_settings();
         self.write_reg(regs::CONTROL, cmds::READPRESSURECMD + (oss << 6))
             .await?;
-        delay.delay_ms(self.mode.conversion_delay_in_ms() as u32).await;
+        delay.delay_ms(self.mode.conversion_delay_in_ms()).await;
 
         let mut buf = [0u8; 3];
         self.i2c.write_read(self.addr, &[regs::PRESSUREDATA], &mut buf).await?;
 
-        let up = ((buf[0] as i32) << 16) + ((buf[1] as i32) << 8) + (buf[2] as i32) >> (8 - oss);
+        let up = (((buf[0] as i32) << 16) + ((buf[1] as i32) << 8) + (buf[2] as i32)) >> (8 - oss);
 
         Ok(up)
     }
@@ -264,9 +264,9 @@ fn convert_measurement(up: i32, ut: i32, calib: &CalibrationData, mode: Mode) ->
     let x1 = ((calib.ac3 as i32) * b6) >> 13;
     let x2 = ((calib.b1 as i32) * ((b6 * b6) >> 12)) >> 16;
     let x3 = ((x1 + x2) + 2) >> 2;
-    let b4: u32 = (calib.ac4 as u32) * ((x3 + 32768) as u32) >> 15;
+    let b4: u32 = ((calib.ac4 as u32) * ((x3 + 32768) as u32)) >> 15;
 
-    let b7 = (up as i64 - b3 as i64) * (50000 >> oss);
+    let b7 = (up as i64 - b3) * (50000 >> oss);
 
     let p = if b7 < 0x80000000 {
         (b7 * 2) / (b4 as i64)

@@ -216,7 +216,7 @@ impl<SPEC: DisplaySpec, SPI: embedded_hal_async::spi::SpiDevice, DC: OutputPin> 
         self.set_update_window(0, 0, SPEC::WIDTH, SPEC::HEIGHT).await?;
 
         self.send_command(cmds::RAMWR).await?;
-        for _ in 0..((SPEC::WIDTH as u16) * (SPEC::HEIGHT as u16)) {
+        for _ in 0..(SPEC::WIDTH * SPEC::HEIGHT) {
             self.send_data(color.to_be_bytes().as_ref()).await?;
         }
         Ok(())

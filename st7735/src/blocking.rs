@@ -143,7 +143,7 @@ impl<SPEC: DisplaySpec, SPI: embedded_hal::spi::SpiDevice, DC: OutputPin> DrawTa
         self.set_update_window(0, 0, SPEC::WIDTH, SPEC::HEIGHT)?;
 
         self.send_command(cmds::RAMWR)?;
-        for _ in 0..((SPEC::WIDTH as u16) * (SPEC::HEIGHT as u16)) {
+        for _ in 0..(SPEC::WIDTH * SPEC::HEIGHT) {
             self.send_data(color.to_be_bytes().as_ref())?;
         }
         Ok(())
