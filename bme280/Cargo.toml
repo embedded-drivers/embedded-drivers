@@ -1,0 +1,21 @@
+[package]
+name = "edrv-bme280"
+documentation = "https://docs.rs/edrv-bme280"
+description = "Driver for BME280 and BMP280, maintained by the embedded-drivers team"
+keywords = ["no-std", "embedded", "embedded-hal-driver"]
+readme = "README.md"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+license.workspace = true
+categories.workspace = true
+
+[dependencies]
+embedded-hal.workspace = true
+embedded-hal-async.workspace = true
+
+[features]
+default = []
+std = []

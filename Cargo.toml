@@ -1,6 +1,14 @@
 [workspace]
 resolver = "2"
-members = ["hmc5883l", "adxl345", "l3g4200d", "bmp180", "ssd1327", "st7735"]
+members = [
+    "hmc5883l",
+    "adxl345",
+    "l3g4200d",
+    "bmp180",
+    "bme280",
+    "ssd1327",
+    "st7735",
+]
 
 exclude = ["template"]
 
