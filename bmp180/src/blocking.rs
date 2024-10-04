@@ -1,4 +1,5 @@
 use embedded_hal::delay::DelayNs;
+#[allow(unused)]
 use micromath::F32Ext;
 
 use super::{cmds, regs, CalibrationData, Config, Error, Measurement, Mode, ADDRESS};

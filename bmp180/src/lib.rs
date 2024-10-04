@@ -3,6 +3,7 @@
 #![no_std]
 
 use embedded_hal_async::delay::DelayNs;
+#[allow(unused)]
 use micromath::F32Ext;
 
 pub mod blocking;
