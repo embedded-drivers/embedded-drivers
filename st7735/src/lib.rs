@@ -215,9 +215,20 @@ impl<SPEC: DisplaySpec, SPI: embedded_hal_async::spi::SpiDevice, DC: OutputPin> 
     pub async fn clear(&mut self, color: Rgb565) -> Result<(), Error<SPI::Error>> {
         self.set_update_window(0, 0, SPEC::WIDTH, SPEC::HEIGHT).await?;
 
+        let pixel_num = SPEC::WIDTH * SPEC::HEIGHT;
+        let cc = color.to_be_bytes();
+        let buf = [
+            cc[0],cc[1],cc[0],cc[1],
+            cc[0],cc[1],cc[0],cc[1],
+            cc[0],cc[1],cc[0],cc[1],
+            cc[0],cc[1],cc[0],cc[1],
+        ];
         self.send_command(cmds::RAMWR).await?;
-        for _ in 0..(SPEC::WIDTH * SPEC::HEIGHT) {
-            self.send_data(color.to_be_bytes().as_ref()).await?;
+        for _ in 0..(pixel_num/8) {
+            self.send_data(&buf).await?;
+        };
+        for _ in 0..(pixel_num%8) {
+            self.send_data(&cc).await?;
         }
         Ok(())
     }
