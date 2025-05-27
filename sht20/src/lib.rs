@@ -59,7 +59,7 @@ impl<I2C: embedded_hal_async::i2c::I2c> SHT20<I2C> {
     pub async fn set_resolution(&mut self, resolution: Resolution) -> Result<(), Error<I2C::Error>> {
         self.resolution = resolution;
 
-        let mut bits = (resolution as u8);
+        let mut bits = resolution as u8;
         bits = bits | 0b10; // disable on-chip heater, enable OTP reload
 
         self.i2c.write(self.addr, &[cmds::WRITE_REG, bits]).await?;
@@ -71,7 +71,7 @@ impl<I2C: embedded_hal_async::i2c::I2c> SHT20<I2C> {
         let mut buf = [0u8; 3];
         self.i2c.write(self.addr, &[cmds::TEMP_HOLD]).await?;
 
-        delay.delay_ms(100);
+        delay.delay_ms(100).await;
 
         self.i2c.read(self.addr, &mut buf).await?;
 
@@ -85,7 +85,7 @@ impl<I2C: embedded_hal_async::i2c::I2c> SHT20<I2C> {
     pub async fn read_humidity(&mut self, mut delay: impl DelayNs) -> Result<f32, Error<I2C::Error>> {
         let mut buf = [0u8; 3];
         self.i2c.write(self.addr, &[cmds::HUM_HOLD]).await?;
-        delay.delay_ms(40);
+        delay.delay_ms(40).await;
         self.i2c.read(self.addr, &mut buf).await?;
 
         let raw = u16::from_be_bytes([buf[0], buf[1]]);

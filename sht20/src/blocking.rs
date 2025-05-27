@@ -20,7 +20,7 @@ impl<I2C: embedded_hal::i2c::I2c> SHT20<I2C> {
     pub fn set_resolution(&mut self, resolution: Resolution) {
         self.resolution = resolution;
 
-        let mut bits = (resolution as u8);
+        let mut bits = resolution as u8;
         bits = bits | 0b10; // disable on-chip heater, enable OTP reload
 
         self.i2c.write(self.addr, &[cmds::WRITE_REG, bits]).unwrap();
