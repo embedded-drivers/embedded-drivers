@@ -2,10 +2,40 @@
 
 #![cfg_attr(not(test), no_std)]
 
+use embedded_hal_async::delay::DelayNs;
+
 pub mod blocking;
 
 pub const PRIMARY_ADDRESS: u8 = 0x68;
 pub const SECONDARY_ADDRESS: u8 = 0x69;
+
+/// `PWR_MGMT_1` value that leaves sleep and selects the X-gyro PLL clock.
+///
+/// Register map RM-MPU-6000A-00, section 4.30: `CLKSEL = 0` is the internal
+/// 8 MHz oscillator and `CLKSEL = 1` is "PLL with X axis gyroscope reference",
+/// and "it is highly recommended that the device be configured to use one of
+/// the gyroscopes (or an external clock source) as the clock reference for
+/// improved stability". The product specification (section 6.6) quantifies that:
+/// the internal oscillator has -5%/+5% initial tolerance and -15%/+10% over
+/// temperature, against +/-1% for the gyro PLL. That error propagates straight
+/// into the sample rate, so `0x00` is not merely a preference.
+///
+/// Bit 6 (SLEEP) is 0, so this also takes the part out of sleep.
+pub const PWR_MGMT_1_CLKSEL_PLL_X_GYRO: u8 = 0x01;
+
+/// How long `init` waits after wake-up, in milliseconds.
+///
+/// The product specification (section 6.1) lists the gyroscope start-up time as
+/// "ZRO Settling (from power-on) to +/-1 dps of Final" = 30 ms typical, and
+/// section 7.15 notes that the MEMS oscillators have to stabilise before they
+/// are selected as the clock source. The sensor registers read as zero until the
+/// first conversion has completed, so without this wait a caller's first read
+/// returns zeros.
+///
+/// Note the datasheet gives this as a **typical** value and for power-on rather
+/// than wake-from-sleep; 30 ms is the closest documented figure and is used as
+/// a floor, not a guarantee.
+pub const WAKE_UP_DELAY_MS: u32 = 30;
 
 pub mod regs {
     pub const XG_OFFS_TC: u8 = 0x00; //[7] PWR_MODE, [6:1] XG_OFFS_TC, [0] OTP_BNK_VLD
@@ -258,7 +288,14 @@ impl<I2C: embedded_hal_async::i2c::I2c> MPU6050<I2C> {
         Self::new(i2c, PRIMARY_ADDRESS)
     }
 
-    pub async fn init(&mut self, config: Config) -> Result<(), Error<I2C::Error>> {
+    /// Validate the part, wake it and wait for the gyro to start up.
+    ///
+    /// `PWR_MGMT_1` is written as [`PWR_MGMT_1_CLKSEL_PLL_X_GYRO`] (leave sleep,
+    /// PLL with X-gyro reference) rather than `0x00`, which would leave the part
+    /// on its internal 8 MHz oscillator. `init` then waits
+    /// [`WAKE_UP_DELAY_MS`] before returning, because the sensor registers read
+    /// zero until the first conversion completes.
+    pub async fn init(&mut self, config: Config, mut delay: impl DelayNs) -> Result<(), Error<I2C::Error>> {
         let who_am_i = self.read_reg(regs::WHO_AM_I).await?;
         if who_am_i != consts::DEV_ID_MPU6050
             && who_am_i != consts::DEV_ID_MPU6500
@@ -268,8 +305,8 @@ impl<I2C: embedded_hal_async::i2c::I2c> MPU6050<I2C> {
             return Err(Error::InvalidDevice);
         }
 
-        // exit sleep mode
-        self.write_reg(regs::PWR_MGMT_1, 0x00).await?;
+        // Exit sleep mode and select the X-gyro PLL as the clock source.
+        self.write_reg(regs::PWR_MGMT_1, PWR_MGMT_1_CLKSEL_PLL_X_GYRO).await?;
 
         // LPF
         self.write_reg(regs::CONFIG, config.lpf as u8).await?;
@@ -284,6 +321,9 @@ impl<I2C: embedded_hal_async::i2c::I2c> MPU6050<I2C> {
 
         self.gyro_range = config.gyro_range;
         self.accel_range = config.accel_range;
+
+        // The sensor registers hold zero until the gyro has started up.
+        delay.delay_ms(WAKE_UP_DELAY_MS).await;
 
         Ok(())
     }
