@@ -13,6 +13,7 @@ members = [
     "mpu6050",
     "mhz19",
     "pmsx003",
+    "vl53l0x",
 ]
 
 exclude = ["template"]
