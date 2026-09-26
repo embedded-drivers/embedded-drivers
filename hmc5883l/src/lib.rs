@@ -1,6 +1,8 @@
 //! Driver for HMC5883L.
 
-#![no_std]
+#![cfg_attr(not(test), no_std)]
+
+use embedded_hal_async::delay::DelayNs;
 
 pub mod blocking;
 
@@ -20,7 +22,28 @@ pub mod regs {
     pub const IDENT_A: u8 = 0x0A;
     pub const IDENT_B: u8 = 0x0B;
     pub const IDENT_C: u8 = 0x0C;
+
+    /// `STATUS` bit 0: a complete set of data is in the output registers.
+    ///
+    /// HMC5883L datasheet, Table 17: "Ready Bit. Set when data is written to all
+    /// six data registers. Cleared when device initiates a write to the data
+    /// output registers and after one or more of the data output registers are
+    /// written to."
+    pub const STATUS_RDY: u8 = 0x01;
 }
+
+/// `MODE` value selecting continuous-measurement mode.
+pub const MODE_CONTINUOUS: u8 = 0x00;
+
+/// Datasheet analog turn-on time, in milliseconds.
+///
+/// HMC5883L datasheet, Table 1: the analog circuit is "Ready for Measurements"
+/// 50 ms after turn-on.
+pub const ANALOG_TURN_ON_MS: u32 = 50;
+
+/// Margin added to the turn-on time and one output period before `init` gives
+/// up waiting for the first measurement.
+pub(crate) const DATA_READY_POLL_MARGIN_MS: u32 = 20;
 
 /// Select number of samples averaged (1 to 8) per measurement output
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,6 +65,24 @@ pub enum Rate {
     Hz15 = 0b100,
     Hz30 = 0b101,
     Hz75 = 0b110,
+}
+
+impl Rate {
+    /// Nominal output period in milliseconds, rounded up.
+    ///
+    /// The data output registers are updated at this rate, so the first
+    /// continuous-mode result cannot appear before one period has passed.
+    pub const fn period_ms(self) -> u32 {
+        match self {
+            Rate::Hz0_75 => 1334, // 1 / 0.75 s
+            Rate::Hz1_5 => 667,
+            Rate::Hz3 => 334,
+            Rate::Hz7_5 => 134,
+            Rate::Hz15 => 67,
+            Rate::Hz30 => 34,
+            Rate::Hz75 => 14,
+        }
+    }
 }
 
 /// Gain settings for the HMC5883L magnetometer.
@@ -111,6 +152,10 @@ impl Default for Config {
 pub enum Error<IE> {
     Bus(IE),
     InvalidDevice,
+    /// The device did not report a complete measurement within the driver's
+    /// polling limit. `init` waits for the first sample and returns this instead
+    /// of handing a caller data that was never measured.
+    Timeout,
 }
 
 impl<E> From<E> for Error<E> {
@@ -138,7 +183,16 @@ impl<I2C: embedded_hal_async::i2c::I2c> HMC5883L<I2C> {
         Self::new(i2c, ADDRESS)
     }
 
-    pub async fn init(&mut self, config: Config) -> Result<(), Error<I2C::Error>> {
+    /// Configure the device and wait for the first continuous-mode measurement.
+    ///
+    /// `MODE` is set to continuous measurement, but the data registers keep
+    /// their reset value until the first measurement completes. The datasheet
+    /// allows 50 ms for the analog circuit to become ready and updates the
+    /// output registers once per configured output period, so `init` polls
+    /// `STATUS.RDY` before returning; a caller that reads immediately otherwise
+    /// gets `(0, 0, 0)` with no error. Once running, the device refreshes the
+    /// registers continuously, so later reads need no additional wait.
+    pub async fn init(&mut self, config: Config, mut delay: impl DelayNs) -> Result<(), Error<I2C::Error>> {
         let id_a = self.read_reg(regs::IDENT_A).await?;
         let id_b = self.read_reg(regs::IDENT_B).await?;
         let id_c = self.read_reg(regs::IDENT_C).await?;
@@ -155,11 +209,31 @@ impl<I2C: embedded_hal_async::i2c::I2c> HMC5883L<I2C> {
         let crb = (config.gain as u8) << 5; // Set GN (CRB7 to CRB5) based on config.gain
         self.write_reg(regs::CONFIG_B, crb).await?;
 
-        self.write_reg(regs::MODE, 0x00).await?; // Continuous-measurement mode
+        self.write_reg(regs::MODE, MODE_CONTINUOUS).await?; // Continuous-measurement mode
 
         self.gain = config.gain;
 
+        self.wait_for_data_ready(config.data_rate, &mut delay).await?;
+
         Ok(())
+    }
+
+    /// Poll `STATUS.RDY` until the first measurement lands, or give up.
+    ///
+    /// The budget is the datasheet's 50 ms analog turn-on plus one output
+    /// period at the configured rate, so a slow rate is allowed to take as long
+    /// as it really takes.
+    async fn wait_for_data_ready(&mut self, rate: Rate, delay: &mut impl DelayNs) -> Result<(), Error<I2C::Error>> {
+        let budget_ms = ANALOG_TURN_ON_MS + rate.period_ms() + DATA_READY_POLL_MARGIN_MS;
+
+        for _ in 0..=budget_ms {
+            if self.read_reg(regs::STATUS).await? & regs::STATUS_RDY != 0 {
+                return Ok(());
+            }
+            delay.delay_ms(1).await;
+        }
+
+        Err(Error::Timeout)
     }
 
     pub async fn read_raw_measurement(&mut self) -> Result<(i16, i16, i16), Error<I2C::Error>> {
