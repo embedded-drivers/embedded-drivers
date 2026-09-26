@@ -6,7 +6,7 @@ description = "Plantower PMSx003 particulate matter (PM1.0/PM2.5/PM10) sensor dr
 # rejected (HTTP 400 at upload). "pm25" plus "particulate" keeps it findable.
 keywords = ["pmsx003", "pms5003", "pm25", "particulate", "no-std"]
 readme = "README.md"
-version = "0.1.0"
+version = "0.1.1"
 edition.workspace = true
 authors.workspace = true
 repository.workspace = true
