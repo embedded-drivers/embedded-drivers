@@ -6,6 +6,7 @@ members = [
     "l3g4200d",
     "bmp180",
     "bme280",
+    "bme680",
     "ssd1327",
     "st7735",
     "sht20",
