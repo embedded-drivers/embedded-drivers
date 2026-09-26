@@ -6,9 +6,9 @@ keywords = ["spl06", "spl06-001", "barometer", "pressure", "no-std"]
 readme = "README.md"
 version = "0.1.2"
 edition.workspace = true
+rust-version.workspace = true
 authors.workspace = true
 repository.workspace = true
-homepage.workspace = true
 license.workspace = true
 categories.workspace = true
 

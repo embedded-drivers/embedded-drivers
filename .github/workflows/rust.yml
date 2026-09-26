@@ -37,3 +37,36 @@ jobs:
 
     - name: Clippy
       run: cargo +nightly clippy --all --all-targets -- -D warnings
+
+  # The workspace declares an MSRV and every crate inherits it, but neither of
+  # those is a check: `resolver = "3"` only *prefers* dependencies that still
+  # build on it, and the manifest only tells downstream users what we claim. This
+  # is the job that actually fails when the claim stops being true. It reads the
+  # version out of the manifest instead of repeating it here, so the floor and the
+  # toolchain under test cannot drift apart.
+  msrv:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Read the declared MSRV from the workspace manifest
+      id: msrv
+      run: |
+        version=$(grep -m1 '^rust-version' Cargo.toml | cut -d'"' -f2)
+        if [ -z "$version" ]; then
+          echo "no rust-version in [workspace.package]" >&2
+          exit 1
+        fi
+        echo "Declared MSRV: $version"
+        echo "version=$version" >> "$GITHUB_OUTPUT"
+
+    - name: Install the declared MSRV
+      run: rustup toolchain install ${{ steps.msrv.outputs.version }} --profile minimal
+
+    - name: Build with the declared MSRV
+      run: cargo +${{ steps.msrv.outputs.version }} build --all --verbose
+
+    - name: Test with the declared MSRV
+      run: cargo +${{ steps.msrv.outputs.version }} test --all --verbose

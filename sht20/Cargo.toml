@@ -6,9 +6,9 @@ keywords = ["sht20", "sht2x", "humidity", "temperature", "no-std"]
 readme = "README.md"
 version = "0.1.1"
 edition.workspace = true
+rust-version.workspace = true
 authors.workspace = true
 repository.workspace = true
-homepage.workspace = true
 license.workspace = true
 categories.workspace = true
 

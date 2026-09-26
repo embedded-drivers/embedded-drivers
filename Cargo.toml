@@ -1,5 +1,10 @@
 [workspace]
-resolver = "2"
+# Resolver 3 is what makes the MSRV below mean something at resolution time: it
+# changes `resolver.incompatible-rust-versions` from `allow` to `fallback`, so a
+# dependency that has raised its own MSRV past ours is no longer picked in
+# preference to one that still builds. Edition 2024 would default to this, but
+# the explicit line is kept so the intent survives anyone pinning an edition.
+resolver = "3"
 members = [
     "hmc5883l",
     "adxl345",
@@ -25,12 +30,17 @@ exclude = ["template"]
 # in one driver does not force a release of all of them; each crate declares its
 # own `version = "..."`. Do not reintroduce a workspace-wide version.
 edition = "2024"
-# Edition 2024 needs Rust 1.85. Declaring an MSRV makes a dependency silently
-# raising it a CI failure instead of a surprise for downstream users.
+# Edition 2024 needs Rust 1.85. This is a real floor in three places, and all
+# three have to agree:
+#   * every crate says `rust-version.workspace = true`, so the value reaches
+#     crates.io - without that the published metadata carries no MSRV at all;
+#   * `resolver = "3"` above makes the resolver prefer dependencies that still
+#     build on it;
+#   * the `msrv` CI job builds with this exact toolchain, reading the version
+#     from this line so the job and the floor cannot drift apart.
 rust-version = "1.85"
 authors = ["Andelf <andelf@gmail.com>"]
 repository = "https://github.com/embedded-drivers/embedded-drivers"
-homepage = "https://github.com/embedded-drivers/embedded-drivers"
 license = "MIT OR Apache-2.0"
 categories = ["no-std", "hardware-support", "embedded"]
 

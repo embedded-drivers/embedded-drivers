@@ -8,9 +8,9 @@ keywords = ["pmsx003", "pms5003", "pm25", "particulate", "no-std"]
 readme = "README.md"
 version = "0.1.1"
 edition.workspace = true
+rust-version.workspace = true
 authors.workspace = true
 repository.workspace = true
-homepage.workspace = true
 license.workspace = true
 categories.workspace = true
 
