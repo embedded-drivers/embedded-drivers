@@ -49,6 +49,13 @@ EXAMPLES = """examples:
   scripts/publish.py --execute --only mhz19,pmsx003
   scripts/publish.py --bump minor --execute"""
 
+# crates.io validates these server-side, so `cargo publish --dry-run` does not
+# catch them: a bad keyword or category only fails at upload time, wasting a
+# request against the new-crate rate limit. Checked locally instead.
+KEYWORD_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+KEYWORD_MAX_LEN = 20
+KEYWORD_MAX_COUNT = 5
+
 RATE_LIMITED = re.compile(r"\b429\b|too many new crates|rate limit", re.I)
 RETRY_AFTER = re.compile(r"try again after (.+?)(?:\s+and see|\s*$)", re.I | re.M)
 
@@ -132,6 +139,8 @@ class Crate:
     directory: str
     exists: bool = False
     versions: set[str] = field(default_factory=set)
+    keywords: list[str] = field(default_factory=list)
+    categories: list[str] = field(default_factory=list)
 
     @property
     def status(self) -> str:
@@ -169,9 +178,58 @@ def workspace_crates(root: Path) -> list[Crate]:
                 name=package["name"],
                 version=package["version"],
                 directory=str(directory.relative_to(base)),
+                keywords=list(package.get("keywords") or []),
+                categories=list(package.get("categories") or []),
             )
         )
     return crates
+
+
+def fetch_category_slugs() -> set[str]:
+    """Every valid crates.io category slug. The endpoint is paginated, 10 a page."""
+    slugs: set[str] = set()
+    page = 1
+    while True:
+        request = urllib.request.Request(
+            f"https://crates.io/api/v1/categories?page={page}",
+            headers={"User-Agent": USER_AGENT},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT) as response:
+                payload = json.load(response)
+        except Exception as exc:  # noqa: BLE001
+            raise Abort(f"could not fetch the crates.io category list: {exc}") from exc
+        items = payload.get("categories", [])
+        if not items:
+            break
+        slugs |= {item["slug"] for item in items}
+        if len(slugs) >= payload.get("meta", {}).get("total", 0):
+            break
+        page += 1
+    return slugs
+
+
+def validate_metadata(crates: list[Crate], categories: set[str]) -> list[str]:
+    """Return a list of things crates.io will reject. Empty means fine."""
+    problems: list[str] = []
+    for crate in crates:
+        if len(crate.keywords) > KEYWORD_MAX_COUNT:
+            problems.append(
+                f"{crate.name}: {len(crate.keywords)} keywords, crates.io allows {KEYWORD_MAX_COUNT}"
+            )
+        for keyword in crate.keywords:
+            if not KEYWORD_RE.match(keyword):
+                problems.append(
+                    f"{crate.name}: keyword {keyword!r} - only letters, digits, '-' and '_' are allowed"
+                )
+            elif len(keyword) > KEYWORD_MAX_LEN:
+                problems.append(
+                    f"{crate.name}: keyword {keyword!r} is longer than {KEYWORD_MAX_LEN} characters"
+                )
+        for category in crate.categories:
+            if category not in categories:
+                problems.append(f"{crate.name}: {category!r} is not a crates.io category")
+    return problems
 
 
 def select(crates: list[Crate], only: set[str], exclude: set[str]) -> list[Crate]:
@@ -397,6 +455,18 @@ def main(argv: list[str] | None = None) -> int:
                 "  Bump the workspace version and re-run, e.g. --bump patch --execute"
             )
 
+        step("Metadata")
+        known_categories = fetch_category_slugs()
+        problems = validate_metadata(to_publish, known_categories)
+        if problems:
+            for problem in problems:
+                error(problem)
+            raise Abort(
+                "crates.io would reject this metadata (it validates keywords and "
+                "categories server-side, so --dry-run cannot catch it)"
+            )
+        ok(f"keywords and categories are valid for {len(to_publish)} crate(s)")
+
         # From here on `todo` is meaningful, so an interrupt at any point can
         # report what is actually left.
         todo = list(to_publish)
@@ -404,7 +474,11 @@ def main(argv: list[str] | None = None) -> int:
         step("Dry run")
         for crate in to_publish:
             print(f"  {crate.name:<16} {crate.version} ... ", end="", flush=True)
-            result = run(["cargo", "publish", "--dry-run", "--quiet", "-p", crate.name], root, capture=True)
+            dry_run = ["cargo", "publish", "--dry-run", "--quiet"]
+            if args.allow_dirty:
+                dry_run.append("--allow-dirty")
+            dry_run += ["-p", crate.name]
+            result = run(dry_run, root, capture=True)
             if result.returncode == 0:
                 print(f"{S.green}ok{S.reset}")
             else:
