@@ -15,12 +15,16 @@ Design notes, because a publish cannot be undone:
   resume command is printed.
 * Ctrl-C during publishing is caught and reported the same way, rather than
   leaving you guessing what went out.
+* **Versions are per crate**, so --bump only ever touches the crates you selected
+  with --only/--exclude. Fixing one driver must not force a release of the other
+  fourteen, so there is deliberately no workspace-wide version to bump.
 
 Usage:
     scripts/publish.py                       # dry run: shows the plan
     scripts/publish.py --execute             # publish, after confirmation
     scripts/publish.py --execute --only mhz19,pmsx003
-    scripts/publish.py --bump minor --execute
+    scripts/publish.py --bump patch --only bme280 --execute
+    scripts/publish.py --bump minor --exclude spl06 --execute
 """
 
 from __future__ import annotations
@@ -47,7 +51,11 @@ EXAMPLES = """examples:
   scripts/publish.py                       # dry run: shows the plan
   scripts/publish.py --execute             # publish, after confirmation
   scripts/publish.py --execute --only mhz19,pmsx003
-  scripts/publish.py --bump minor --execute"""
+  scripts/publish.py --bump patch --only bme280 --execute
+  scripts/publish.py --bump minor --exclude spl06 --execute
+
+--bump needs a scope: with per-crate versions there is no single version to bump,
+so pass --only (or --exclude) naming the crates you are actually releasing."""
 
 # crates.io validates these server-side, so `cargo publish --dry-run` does not
 # catch them: a bad keyword or category only fails at upload time, wasting a
@@ -339,31 +347,50 @@ def next_version(current: str, spec: str) -> str:
     return spec
 
 
-def bump_and_commit(root: Path, spec: str) -> str:
-    step(f"Bumping the workspace version ({spec})")
+def bump_and_commit(root: Path, crates: list[Crate], spec: str) -> None:
+    """Bump each selected crate's own version, then commit.
 
-    manifest = root / "Cargo.toml"
-    text = manifest.read_text()
-    section = text.find("[workspace.package]")
-    if section < 0:
-        raise Abort("no [workspace.package] in Cargo.toml")
-    match = re.compile(r'^(version\s*=\s*")([^"]+)(")', re.M).search(text, section)
-    if not match:
-        raise Abort("no version in [workspace.package]")
+    Versions are per crate: a fix in one driver must not force a release of all
+    the others, so there is no workspace-wide version to bump and a blank
+    `--bump` would have nothing meaningful to do. Hence the scope requirement.
+    """
+    if not crates:
+        raise Abort("--bump selected no crates (check --only/--exclude)")
 
-    current = match.group(2)
-    new = next_version(current, spec)
-    if new == current:
-        raise Abort(f"--bump {spec} did not change the version ({current})")
-    info(f"  {current} -> {new}")
+    step(f"Bumping {len(crates)} crate version(s) ({spec})")
 
-    manifest.write_text(text[: match.start(2)] + new + text[match.end(2) :])
+    touched: list[Path] = []
+    released: list[str] = []
+
+    for crate in crates:
+        manifest = root / crate.directory / "Cargo.toml"
+        text = manifest.read_text()
+        match = re.compile(r'^(version\s*=\s*")([^"]+)(")', re.M).search(text)
+        if not match:
+            raise Abort(f"no `version` in {manifest}")
+        if match.group(2) != crate.version:
+            raise Abort(
+                f"{crate.name}: cargo metadata says {crate.version} but {manifest} "
+                f"says {match.group(2)}; re-run cargo metadata first"
+            )
+
+        current = match.group(2)
+        bumped = next_version(current, spec)
+        if bumped == current:
+            raise Abort(f"--bump {spec} did not change {crate.name} ({current})")
+
+        manifest.write_text(text[: match.start(2)] + bumped + text[match.end(2) :])
+        info(f"  {crate.name:<16} {current} -> {bumped}")
+        touched.append(manifest)
+        released.append(f"{crate.name} {bumped}")
+
+    # Keep Cargo.lock in step, then commit only what we touched.
     run(["cargo", "update", "--workspace"], root)
-    run(["git", "add", "Cargo.toml"], root)
-    run(["git", "add", "Cargo.lock"], root)  # gitignored here; harmless if it fails
-    run(["git", "commit", "-m", f"chore: release {new}"], root)
-    ok(f"bumped to {new} and committed")
-    return new
+    run(["git", "add", *[str(path.relative_to(root)) for path in touched]], root)
+    if (root / "Cargo.lock").is_file():
+        run(["git", "add", "Cargo.lock"], root)
+    run(["git", "commit", "-m", "chore: release " + ", ".join(released)], root)
+    ok(f"bumped and committed: {', '.join(released)}")
 
 
 def report_publish_failure(crate: Crate, output: str, done: list[Crate], todo: list[Crate]) -> None:
@@ -405,7 +432,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--strict", action="store_true",
                         help="fail if a version is already published, instead of skipping it")
     parser.add_argument("--bump", metavar="SPEC",
-                        help="bump the workspace version first (patch|minor|major|X.Y.Z)")
+                        help="bump the selected crates' own versions first "
+                             "(patch|minor|major|X.Y.Z); needs --only/--exclude")
     parser.add_argument("--only", metavar="A,B", default="", help="publish only these crates")
     parser.add_argument("--exclude", metavar="A,B", default="", help="skip these crates")
     parser.add_argument("--skip-checks", action="store_true", help="skip build/test/clippy/fmt")
@@ -422,13 +450,29 @@ def main(argv: list[str] | None = None) -> int:
     try:
         root = workspace_root()
 
+        # --bump must be scoped explicitly. Without this, a bare `--bump patch`
+        # selects every crate and releases all fifteen for a one-driver fix -
+        # which is the whole thing per-crate versions exist to prevent.
+        if args.bump and not (args.only or args.exclude):
+            raise Abort(
+                "--bump needs a scope.\n"
+                "  Versions are per crate, so name the crates you are releasing:\n"
+                "    scripts/publish.py --bump patch --only bme280 --execute\n"
+                "  A blanket bump would release all of them."
+            )
+
+        # Selection happens first: with per-crate versions, --bump has to know
+        # which crates it is bumping.
+        crates = select(workspace_crates(root), as_set(args.only), as_set(args.exclude))
+
         if args.bump:
-            bump_and_commit(root, args.bump)
+            bump_and_commit(root, crates, args.bump)
+            # the versions on disk just changed, so re-read them
+            crates = select(workspace_crates(root), as_set(args.only), as_set(args.exclude))
 
         preflight(root, args.skip_checks, args.allow_dirty)
 
         step("Planning")
-        crates = select(workspace_crates(root), as_set(args.only), as_set(args.exclude))
         for crate in crates:
             crate.exists, crate.versions = fetch_versions(crate.name)
             print(f"  {crate.name:<16} {crate.version:<8} {crate.directory:<10} {crate.status}")
@@ -440,7 +484,8 @@ def main(argv: list[str] | None = None) -> int:
             raise Abort(
                 f"{len(skipped)} crate(s) are already published at this version: "
                 + ", ".join(c.name for c in skipped)
-                + "\n  Bump the workspace version (--bump patch) if you meant to re-release them."
+                + "\n  Bump those crates if you meant to re-release them, e.g."
+                + " --bump patch --only " + ",".join(c.name for c in skipped)
             )
 
         if skipped:
@@ -452,7 +497,8 @@ def main(argv: list[str] | None = None) -> int:
         if not to_publish:
             raise Abort(
                 "nothing left to publish: every selected crate is already on crates.io.\n"
-                "  Bump the workspace version and re-run, e.g. --bump patch --execute"
+                "  Bump those crates and re-run, e.g."
+                " --bump patch --only " + ",".join(c.name for c in crates) + " --execute"
             )
 
         step("Metadata")

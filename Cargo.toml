@@ -21,7 +21,9 @@ members = [
 exclude = ["template"]
 
 [workspace.package]
-version = "0.1.0"
+# Deliberately no `version` here. Versions are per crate so that fixing a bug
+# in one driver does not force a release of all of them; each crate declares its
+# own `version = "..."`. Do not reintroduce a workspace-wide version.
 edition = "2024"
 # Edition 2024 needs Rust 1.85. Declaring an MSRV makes a dependency silently
 # raising it a CI failure instead of a surprise for downstream users.

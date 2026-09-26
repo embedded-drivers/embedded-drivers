@@ -6,7 +6,7 @@ description = "Driver for Plantower PMSx003 particulate sensors (PMS1003/3003/50
 # rejected (HTTP 400 at upload). "pm25" plus "particulate" keeps it findable.
 keywords = ["no-std", "embedded", "embedded-hal-driver", "pm25", "particulate"]
 readme = "README.md"
-version.workspace = true
+version = "0.1.0"
 edition.workspace = true
 authors.workspace = true
 repository.workspace = true

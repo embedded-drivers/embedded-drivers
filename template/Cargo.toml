@@ -4,7 +4,7 @@ documentation = "https://docs.rs/edrv-{{ project-name }}"
 description = "Driver for {{ chip_name }}, maintained by the embedded-drivers team"
 keywords = ["no-std", "embedded", "embedded-hal-driver"]
 readme = "README.md"
-version.workspace = true
+version = "0.1.0"
 edition.workspace = true
 authors.workspace = true
 repository.workspace = true
@@ -15,10 +15,6 @@ categories.workspace = true
 [dependencies]
 embedded-hal.workspace = true
 embedded-hal-async.workspace = true
-
-[features]
-default = []
-std = []
 
 [lints]
 workspace = true
