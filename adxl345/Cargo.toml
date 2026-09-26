@@ -1,8 +1,8 @@
 [package]
 name = "edrv-adxl345"
 documentation = "https://docs.rs/edrv-adxl345"
-description = "Driver for ADXL345, maintained by the embedded-drivers team"
-keywords = ["no-std", "embedded", "embedded-hal-driver"]
+description = "ADXL345 3-axis accelerometer driver for embedded Rust (no_std, I2C)"
+keywords = ["adxl345", "accelerometer", "i2c", "no-std"]
 readme = "README.md"
 version = "0.1.0"
 edition.workspace = true

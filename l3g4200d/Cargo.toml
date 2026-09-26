@@ -1,8 +1,8 @@
 [package]
 name = "edrv-l3g4200d"
 documentation = "https://docs.rs/edrv-l3g4200d"
-description = "Driver for L3G4200D, maintained by the embedded-drivers team"
-keywords = ["no-std", "embedded", "embedded-hal-driver"]
+description = "L3G4200D 3-axis gyroscope driver for embedded Rust (no_std, I2C)"
+keywords = ["l3g4200d", "gyroscope", "gyro", "i2c", "no-std"]
 readme = "README.md"
 version = "0.1.0"
 edition.workspace = true

@@ -1,10 +1,10 @@
 [package]
 name = "edrv-pmsx003"
 documentation = "https://docs.rs/edrv-pmsx003"
-description = "Driver for Plantower PMSx003 particulate sensors (PMS1003/3003/5003/7003/9003), maintained by the embedded-drivers team"
+description = "Plantower PMSx003 particulate matter (PM1.0/PM2.5/PM10) sensor driver for embedded Rust (no_std, UART)"
 # crates.io keywords allow only letters, digits, '-' and '_', so "pm2.5" is
 # rejected (HTTP 400 at upload). "pm25" plus "particulate" keeps it findable.
-keywords = ["no-std", "embedded", "embedded-hal-driver", "pm25", "particulate"]
+keywords = ["pmsx003", "pms5003", "pm25", "particulate", "no-std"]
 readme = "README.md"
 version = "0.1.0"
 edition.workspace = true

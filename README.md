@@ -2,6 +2,10 @@
 
 embedded-hal compatible drivers for various sensors, displays, and IC modules.
 
+Every crate targets **embedded-hal v1** and, where it has an asynchronous API,
+**embedded-hal-async v1**. The older embedded-hal v0.2 traits are deliberately
+not supported.
+
 NOTE: To help with branding and avoid conflicts, all drivers are prefixed with `edrv-`.
 
 ## Driver Collections
@@ -13,7 +17,7 @@ WIP.
 ### Why another driver crate?
 
 - Rust embedded driver libraries are always outdated
-- Most of them are not compatible with the newest embedded-hal, say v1 and v0.2
+- Most of them are not compatible with the newest embedded-hal (v1)
 - Many Rust Embedded developers are from non-embedded backend, they move from the embedded world when their hobby project is done. So, they don't have time to maintain the driver library consistently
 - Most of them are over-engineering. You write beautiful Rust code, but I just want to read a sensor value
   - All the hidden commands in datasheets are introduced in builder style. WTF
@@ -31,7 +35,7 @@ A unified org is required to handle the situation.
 
 Being the "Adafruit" of Rust embedded ecosystem, providing the most up-to-date, easy-to-use, and well-documented driver libraries for different kinds of sensors, displays, or IC modules.
 
-- **Up-to-date and reliable**: Consistently maintained drivers that align with the latest embedded-hal versions (v1, v0.2, and beyond).
+- **Up-to-date and reliable**: Consistently maintained drivers that align with the latest embedded-hal (v1). v0.2 is not supported.
 - **Ease of use**: Prioritize simplicity and intuitive interfaces tailored to embedded developers, even those new to Rust.
 - **Unified style**: Changing to another IC or display? just rename the IC in crate name.
 - **Practical focus**: Enable core functionalities like reading sensor values without over-engineered abstractions.

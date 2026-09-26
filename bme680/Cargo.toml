@@ -1,8 +1,8 @@
 [package]
 name = "edrv-bme680"
 documentation = "https://docs.rs/edrv-bme680"
-description = "Driver for the BME680 temperature, humidity, pressure and gas sensor, maintained by the embedded-drivers team"
-keywords = ["no-std", "embedded", "embedded-hal-driver"]
+description = "BME680 temperature, humidity, pressure and gas sensor driver for embedded Rust (no_std, I2C)"
+keywords = ["bme680", "bme688", "pressure", "gas", "no-std"]
 readme = "README.md"
 version = "0.1.0"
 edition.workspace = true

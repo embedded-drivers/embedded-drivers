@@ -1,8 +1,8 @@
 [package]
 name = "edrv-ssd1327"
 documentation = "https://docs.rs/edrv-ssd1327"
-description = "Driver for SSD1327, maintained by the embedded-drivers team"
-keywords = ["no-std", "embedded", "embedded-hal-driver"]
+description = "SSD1327 grayscale OLED display driver for embedded Rust (no_std, SPI)"
+keywords = ["ssd1327", "oled", "display", "spi", "no-std"]
 readme = "README.md"
 version = "0.1.0"
 edition.workspace = true

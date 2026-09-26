@@ -1,8 +1,8 @@
 [package]
 name = "edrv-bmp180"
 documentation = "https://docs.rs/edrv-bmp180"
-description = "Driver for BMP180 and BMP085, maintained by the embedded-drivers team"
-keywords = ["no-std", "embedded", "embedded-hal-driver"]
+description = "BMP180 and BMP085 barometric pressure sensor driver for embedded Rust (no_std, I2C)"
+keywords = ["bmp180", "bmp085", "barometer", "pressure", "no-std"]
 readme = "README.md"
 version = "0.1.0"
 edition.workspace = true

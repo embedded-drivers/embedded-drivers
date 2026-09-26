@@ -1,8 +1,8 @@
 [package]
 name = "edrv-mhz19"
 documentation = "https://docs.rs/edrv-mhz19"
-description = "Driver for the Winsen MH-Z19 / MH-Z19B NDIR CO2 sensor, maintained by the embedded-drivers team"
-keywords = ["no-std", "embedded", "embedded-hal-driver", "co2"]
+description = "Winsen MH-Z19 and MH-Z19B NDIR CO2 sensor driver for embedded Rust (no_std, UART)"
+keywords = ["mhz19", "co2", "uart", "air-quality", "no-std"]
 readme = "README.md"
 version = "0.1.0"
 edition.workspace = true

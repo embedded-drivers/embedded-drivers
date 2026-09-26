@@ -1,8 +1,8 @@
 [package]
 name = "edrv-st7735"
 documentation = "https://docs.rs/edrv-st7735"
-description = "Driver for ST7735, maintained by the embedded-drivers team"
-keywords = ["no-std", "embedded", "embedded-hal-driver"]
+description = "ST7735 TFT display driver for embedded Rust (no_std, SPI)"
+keywords = ["st7735", "tft", "display", "spi", "no-std"]
 readme = "README.md"
 version = "0.1.0"
 edition.workspace = true

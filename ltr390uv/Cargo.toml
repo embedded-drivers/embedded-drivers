@@ -1,8 +1,8 @@
 [package]
 name = "edrv-ltr390uv"
 documentation = "https://docs.rs/edrv-ltr390uv"
-description = "Driver for LTR390UV, maintained by the embedded-drivers team"
-keywords = ["no-std", "embedded", "embedded-hal-driver"]
+description = "LTR390UV ambient light and UV sensor driver for embedded Rust (no_std, I2C)"
+keywords = ["ltr390uv", "ltr390", "uv", "ambient-light", "no-std"]
 readme = "README.md"
 version = "0.1.0"
 edition.workspace = true

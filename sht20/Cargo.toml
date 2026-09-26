@@ -1,8 +1,8 @@
 [package]
 name = "edrv-sht20"
 documentation = "https://docs.rs/edrv-sht20"
-description = "Driver for SHT20, maintained by the embedded-drivers team"
-keywords = ["no-std", "embedded", "embedded-hal-driver"]
+description = "SHT20 temperature and humidity sensor driver for embedded Rust (no_std, I2C)"
+keywords = ["sht20", "sht2x", "humidity", "temperature", "no-std"]
 readme = "README.md"
 version = "0.1.0"
 edition.workspace = true
