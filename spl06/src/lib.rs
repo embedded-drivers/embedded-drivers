@@ -81,6 +81,12 @@ pub const PRODUCT_ID: u8 = 0x10;
 /// again before the next measurement.
 pub const SOFT_RESET_COMMAND: u8 = 0x09;
 
+/// Worst-case time from power-on (or soft reset) until the calibration
+/// coefficients can be read, `TCoef_rdy` in the datasheet.
+///
+/// Both [`SPL06::init`] and [`SPL06::reset`] wait this long.
+pub(crate) const STARTUP_TIME_MS: u32 = 40;
+
 /// Register addresses, register field masks and block lengths.
 ///
 /// Addresses and bit positions are from the SPL06-001 V1.0 datasheet,
@@ -643,30 +649,32 @@ impl<I2C: embedded_hal_async::i2c::I2c> SPL06<I2C> {
         Self::new(i2c, ADDRESS)
     }
 
-    /// Validate the device, read the calibration data and program the default
-    /// oversampling.
+    /// Validate the device, wait for its start-up sequence, read the
+    /// calibration data and program the default oversampling.
     ///
     /// Reads [`regs::ID`] and rejects anything other than [`PRODUCT_ID`], then
-    /// reads the 18-byte calibration block at [`regs::COEF`] and applies
-    /// [`Config::default`].
+    /// polls `MEAS_CFG` until `COEF_RDY` is set, reads the 18-byte calibration
+    /// block at [`regs::COEF`] and applies [`Config::default`].
     ///
     /// Unlike the vendor's own start-up sequence this does **not** soft reset:
     /// [`SPL06::reset`] is an explicit, separate step, matching `edrv-bme280`
     /// and `edrv-bme680`. `init` is safe without a preceding reset because it
     /// programs every writable configuration register explicitly.
     ///
-    /// `init` has no delay and therefore cannot wait for the sensor's start-up
-    /// sequence. The datasheet's `TCoef_rdy` is 40 ms after power-on, so a
-    /// caller that has just powered the part up (rather than coming from
-    /// [`SPL06::reset`], which already waits 40 ms) should either wait first or
-    /// poll `MEAS_CFG` through [`SPL06::read_reg`] until `COEF_RDY` is set.
-    /// Reading the device too early returns an all-zero calibration block, which
-    /// every later measurement would use without complaint.
-    pub async fn init(&mut self) -> Result<(), Error<I2C::Error>> {
+    /// The wait is not optional. The coefficients are unavailable for
+    /// `TCoef_rdy` (40 ms) after power-on, and the part answers a read in that
+    /// window with an all-zero block rather than an error. Every term of the
+    /// compensation polynomial is multiplied by a coefficient, so that block
+    /// decodes to exactly 0 Pa and 0.00 degC and no measurement ever complains
+    /// about it. `init` therefore returns [`Error::Timeout`] if the flag does not
+    /// appear within twice `TCoef_rdy`, rather than accepting a blank block.
+    pub async fn init(&mut self, mut delay: impl DelayNs) -> Result<(), Error<I2C::Error>> {
         let id = self.read_reg(regs::ID).await?;
         if id != PRODUCT_ID {
             return Err(Error::InvalidDevice(id));
         }
+
+        self.wait_for_startup(&mut delay).await?;
 
         self.read_calibration().await?;
         self.configure().await?;
@@ -685,7 +693,7 @@ impl<I2C: embedded_hal_async::i2c::I2c> SPL06<I2C> {
     pub async fn reset(&mut self, mut delay: impl DelayNs) -> Result<(), Error<I2C::Error>> {
         self.write_reg(regs::RESET, SOFT_RESET_COMMAND).await?;
 
-        delay.delay_ms(40).await;
+        delay.delay_ms(STARTUP_TIME_MS).await;
 
         self.calibrated = false;
 
@@ -777,13 +785,16 @@ impl<I2C: embedded_hal_async::i2c::I2c> SPL06<I2C> {
     }
 
     /// Poll [`regs::MEAS_CFG`] until `flag` is set.
+    ///
+    /// Gives up after twice `worst_case_ms` plus 10 ms, sleeping 1 ms between
+    /// polls.
     async fn wait_for_flag<D: DelayNs>(
         &mut self,
         flag: u8,
-        measurement_time_ms: u32,
+        worst_case_ms: u32,
         delay: &mut D,
     ) -> Result<(), Error<I2C::Error>> {
-        let limit = measurement_time_ms * 2 + 10;
+        let limit = worst_case_ms * 2 + 10;
         let mut polls = 0;
 
         while self.read_reg(regs::MEAS_CFG).await? & flag == 0 {
@@ -795,6 +806,24 @@ impl<I2C: embedded_hal_async::i2c::I2c> SPL06<I2C> {
         }
 
         Ok(())
+    }
+
+    /// Poll [`regs::MEAS_CFG`] until the part reports that the calibration
+    /// coefficients can be read.
+    ///
+    /// [`regs::COEF_RDY`] (bit 7) means "calibration coefficients valid", which
+    /// the datasheet places about 40 ms after power-up. That is exactly the
+    /// precondition for the read that follows, so waiting on it alone is both
+    /// sufficient and minimal.
+    ///
+    /// [`regs::SENSOR_RDY`] (bit 6) is deliberately *not* required: it reports
+    /// that the sensor finished its own initialisation, which is not a
+    /// precondition for reading the coefficient block. Requiring it would make
+    /// `init` fail on a part that publishes its coefficients before, or without,
+    /// that flag. Paparazzi's `spa06.c` waits for both bits, iNav's
+    /// `barometer_spl06.c` reads the block on `COEFFS_RDY` alone.
+    async fn wait_for_startup(&mut self, delay: &mut impl DelayNs) -> Result<(), Error<I2C::Error>> {
+        self.wait_for_flag(regs::COEF_RDY, STARTUP_TIME_MS, delay).await
     }
 
     /// Read one register.

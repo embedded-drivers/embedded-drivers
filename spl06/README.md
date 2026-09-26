@@ -36,7 +36,7 @@ This project is maintained by the embedded-drivers team. Our organization's goal
 - Raw 24-bit ADC values (`raw_temperature()`, `raw_pressure()`) exposed alongside the compensated ones.
 - Configurable oversampling, with the mandatory result bit-shift handled automatically.
 - Raw register access: `read_reg`, `read_regs` and `write_reg`.
-- `reset(delay)` is a separate step; `init()` never soft resets.
+- `reset(delay)` is a separate step; `init(delay)` never soft resets.
 
 ## Wiring
 
@@ -59,7 +59,7 @@ primary address is `0x76`.
 use edrv_spl06::SPL06;
 
 let mut sensor = SPL06::new(i2c, edrv_spl06::ADDRESS);
-sensor.init().await?; // product ID, calibration, default oversampling
+sensor.init(&mut delay).await?; // product ID, start-up, calibration, default oversampling
 
 let measurement = sensor.measure(&mut delay).await?;
 let pressure_pa = measurement.pressure;          // integer pascal
@@ -73,24 +73,32 @@ The blocking driver has the same shape:
 use edrv_spl06::blocking::SPL06;
 
 let mut sensor = SPL06::new_primary(i2c);
-sensor.init()?;
+sensor.init(&mut delay)?;
 let measurement = sensor.measure(&mut delay)?;
 ```
 
-`init` validates the product/revision ID (`0x10`), reads the 18-byte calibration
-block at `0x10` and programs 8 times oversampling on both channels. `measure`
-performs a single command-mode temperature conversion followed by a pressure
-conversion, polling the ready flags with a timeout, so the sensor stays in
-standby between readings. Unlike the vendor's start-up sequence, `init` does not
-soft reset; call `reset(&mut delay)` first for a full power-on sequence, then
-`init` again. `init` takes no delay, so wait at least 40 ms after power-on (the
-datasheet's `TCoef_rdy`) before calling it, or poll `MEAS_CFG` for `COEF_RDY`;
-`reset(&mut delay)` already waits. Reading the calibration too early returns an
-all-zero block, which the compensation would then happily use.
+`init` validates the product/revision ID (`0x10`), waits for the part to report
+that its start-up sequence has finished, reads the 18-byte calibration block at
+`0x10` and programs 8 times oversampling on both channels. `measure` performs a
+single command-mode temperature conversion followed by a pressure conversion,
+polling the ready flags with a timeout, so the sensor stays in standby between
+readings. Unlike the vendor's start-up sequence, `init` does not soft reset; call
+`reset(&mut delay)` first for a full power-on sequence, then `init` again.
+
+The start-up wait matters. The calibration coefficients are not available for
+`TCoef_rdy` (40 ms) after power-on, and the part answers a read in that window
+with an all-zero block instead of an error. Every term of the compensation
+polynomial is multiplied by a coefficient, so that block decodes to exactly 0 Pa
+and 0.00 degC and the readings never look obviously broken. `init` therefore
+polls `MEAS_CFG` for `COEF_RDY` (bit 7, "calibration coefficients valid") and
+returns an error if it does not appear, rather than accepting a blank block. Only
+that bit is required: `SENSOR_RDY` (bit 6) reports the sensor's own
+initialisation, which is not a precondition for reading the coefficient block.
+`reset(&mut delay)` waits the same 40 ms before returning.
 
 Use `set_oversampling(pressure, temperature)` to change the precision; it writes
-the configuration registers immediately. `measure` and `reset` need a delay,
-exactly like `edrv-bme280`'s and `edrv-bme680`'s.
+the configuration registers immediately. `init`, `measure` and `reset` all need a
+delay, exactly like `edrv-bme280`'s and `edrv-bme680`'s.
 
 ## Oversampling and the `kP` / `kT` scale factors
 

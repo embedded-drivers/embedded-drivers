@@ -6,8 +6,8 @@
 use embedded_hal::delay::DelayNs;
 
 use crate::{
-    ADDRESS, CalibrationData, Config, Error, Measurements, Oversampling, PRODUCT_ID, SOFT_RESET_COMMAND, compensate,
-    decode_i24, regs,
+    ADDRESS, CalibrationData, Config, Error, Measurements, Oversampling, PRODUCT_ID, SOFT_RESET_COMMAND,
+    STARTUP_TIME_MS, compensate, decode_i24, regs,
 };
 
 /// Blocking SPL06-001 / SPL06-007 driver.
@@ -41,30 +41,32 @@ impl<I2C: embedded_hal::i2c::I2c> SPL06<I2C> {
         Self::new(i2c, ADDRESS)
     }
 
-    /// Validate the device, read the calibration data and program the default
-    /// oversampling.
+    /// Validate the device, wait for its start-up sequence, read the
+    /// calibration data and program the default oversampling.
     ///
     /// Reads [`regs::ID`] and rejects anything other than [`PRODUCT_ID`], then
-    /// reads the 18-byte calibration block at [`regs::COEF`] and applies
-    /// [`Config::default`].
+    /// polls `MEAS_CFG` until `COEF_RDY` is set, reads the 18-byte calibration
+    /// block at [`regs::COEF`] and applies [`Config::default`].
     ///
     /// Unlike the vendor's own start-up sequence this does **not** soft reset:
     /// [`SPL06::reset`] is an explicit, separate step, matching `edrv-bme280`
     /// and `edrv-bme680`. `init` is safe without a preceding reset because it
     /// programs every writable configuration register explicitly.
     ///
-    /// `init` has no delay and therefore cannot wait for the sensor's start-up
-    /// sequence. The datasheet's `TCoef_rdy` is 40 ms after power-on, so a
-    /// caller that has just powered the part up (rather than coming from
-    /// [`SPL06::reset`], which already waits 40 ms) should either wait first or
-    /// poll `MEAS_CFG` through [`SPL06::read_reg`] until `COEF_RDY` is set.
-    /// Reading the device too early returns an all-zero calibration block, which
-    /// every later measurement would use without complaint.
-    pub fn init(&mut self) -> Result<(), Error<I2C::Error>> {
+    /// The wait is not optional. The coefficients are unavailable for
+    /// `TCoef_rdy` (40 ms) after power-on, and the part answers a read in that
+    /// window with an all-zero block rather than an error. Every term of the
+    /// compensation polynomial is multiplied by a coefficient, so that block
+    /// decodes to exactly 0 Pa and 0.00 degC and no measurement ever complains
+    /// about it. `init` therefore returns [`Error::Timeout`] if the flags do not
+    /// appear within twice `TCoef_rdy`, rather than accepting a blank block.
+    pub fn init(&mut self, mut delay: impl DelayNs) -> Result<(), Error<I2C::Error>> {
         let id = self.read_reg(regs::ID)?;
         if id != PRODUCT_ID {
             return Err(Error::InvalidDevice(id));
         }
+
+        self.wait_for_startup(&mut delay)?;
 
         self.read_calibration()?;
         self.configure()?;
@@ -83,7 +85,7 @@ impl<I2C: embedded_hal::i2c::I2c> SPL06<I2C> {
     pub fn reset(&mut self, mut delay: impl DelayNs) -> Result<(), Error<I2C::Error>> {
         self.write_reg(regs::RESET, SOFT_RESET_COMMAND)?;
 
-        delay.delay_ms(40);
+        delay.delay_ms(STARTUP_TIME_MS);
 
         self.calibrated = false;
 
@@ -173,13 +175,16 @@ impl<I2C: embedded_hal::i2c::I2c> SPL06<I2C> {
     }
 
     /// Poll [`regs::MEAS_CFG`] until `flag` is set.
+    ///
+    /// Gives up after twice `worst_case_ms` plus 10 ms, sleeping 1 ms between
+    /// polls.
     fn wait_for_flag<D: DelayNs>(
         &mut self,
         flag: u8,
-        measurement_time_ms: u32,
+        worst_case_ms: u32,
         delay: &mut D,
     ) -> Result<(), Error<I2C::Error>> {
-        let limit = measurement_time_ms * 2 + 10;
+        let limit = worst_case_ms * 2 + 10;
         let mut polls = 0;
 
         while self.read_reg(regs::MEAS_CFG)? & flag == 0 {
@@ -191,6 +196,24 @@ impl<I2C: embedded_hal::i2c::I2c> SPL06<I2C> {
         }
 
         Ok(())
+    }
+
+    /// Poll [`regs::MEAS_CFG`] until the part reports that the calibration
+    /// coefficients can be read.
+    ///
+    /// [`regs::COEF_RDY`] (bit 7) means "calibration coefficients valid", which
+    /// the datasheet places about 40 ms after power-up. That is exactly the
+    /// precondition for the read that follows, so waiting on it alone is both
+    /// sufficient and minimal.
+    ///
+    /// [`regs::SENSOR_RDY`] (bit 6) is deliberately *not* required: it reports
+    /// that the sensor finished its own initialisation, which is not a
+    /// precondition for reading the coefficient block. Requiring it would make
+    /// `init` fail on a part that publishes its coefficients before, or without,
+    /// that flag. Paparazzi's `spa06.c` waits for both bits, iNav's
+    /// `barometer_spl06.c` reads the block on `COEFFS_RDY` alone.
+    fn wait_for_startup(&mut self, delay: &mut impl DelayNs) -> Result<(), Error<I2C::Error>> {
+        self.wait_for_flag(regs::COEF_RDY, STARTUP_TIME_MS, delay)
     }
 
     /// Read one register.
@@ -215,7 +238,7 @@ impl<I2C: embedded_hal::i2c::I2c> SPL06<I2C> {
 
 #[cfg(test)]
 mod tests {
-    use core::cell::RefCell;
+    use core::cell::{Cell, RefCell};
     use std::vec::Vec;
 
     use embedded_hal::i2c::ErrorKind;
@@ -238,8 +261,12 @@ mod tests {
     struct FakeSpl06 {
         writes: RefCell<Vec<(u8, u8)>>,
         reads: RefCell<Vec<u8>>,
-        /// Value returned for [`regs::MEAS_CFG`].
+        /// Value returned for [`regs::MEAS_CFG`], once start-up has finished.
         status: u8,
+        /// Number of `MEAS_CFG` reads that still report [`regs::COEF_RDY`] as
+        /// clear, used to model the roughly 40 ms a real part needs before its
+        /// coefficients are valid. Zero by default.
+        startup_polls_left: Cell<u32>,
         calibration: [u8; regs::CALIBRATION_LEN],
         pressure: [u8; regs::DATA_LEN],
         temperature: [u8; regs::DATA_LEN],
@@ -252,6 +279,7 @@ mod tests {
                 reads: RefCell::new(Vec::new()),
                 // Coefficients and raw values from the cross-check test vector.
                 status: regs::COEF_RDY | regs::SENSOR_RDY | regs::TMP_RDY | regs::PRS_RDY,
+                startup_polls_left: Cell::new(0),
                 calibration: [
                     0x0c, 0xbe, 0xfc, 0x13, 0xd9, 0xaf, 0x2b, 0x34, 0xf3, 0xf7, 0x04, 0xff, 0xda, 0x5a, 0x00, 0x0a,
                     0xfb, 0x1b,
@@ -286,7 +314,17 @@ mod tests {
 
             match reg {
                 regs::ID => read[0] = PRODUCT_ID,
-                regs::MEAS_CFG => read[0] = self.status,
+                regs::MEAS_CFG => {
+                    // Model the ~40 ms window before the coefficients are valid:
+                    // report `COEF_RDY` as clear for the first few reads.
+                    let left = self.startup_polls_left.get();
+                    if left > 0 {
+                        self.startup_polls_left.set(left - 1);
+                        read[0] = self.status & !regs::COEF_RDY;
+                    } else {
+                        read[0] = self.status;
+                    }
+                }
                 regs::COEF => read.copy_from_slice(&self.calibration),
                 regs::PRS_B2 => read[..regs::DATA_LEN].copy_from_slice(&self.pressure),
                 regs::TMP_B2 => read[..regs::DATA_LEN].copy_from_slice(&self.temperature),
@@ -324,7 +362,7 @@ mod tests {
     #[test]
     fn configuration_is_written_in_the_documented_order() {
         let mut sensor = SPL06::new(FakeSpl06::default(), ADDRESS);
-        sensor.init().expect("init should succeed against the fake");
+        sensor.init(&mut NoDelay).expect("init should succeed against the fake");
 
         let writes = sensor.i2c.writes.borrow().clone();
 
@@ -334,14 +372,18 @@ mod tests {
             vec![regs::PRS_CFG, regs::TMP_CFG, regs::CFG_REG]
         );
 
-        // `init` reads the product ID first, then the calibration block.
-        assert_eq!(sensor.i2c.reads.borrow().clone(), vec![regs::ID, regs::COEF]);
+        // `init` reads the product ID, waits for the start-up flags, and only
+        // then reads the calibration block.
+        assert_eq!(
+            sensor.i2c.reads.borrow().clone(),
+            vec![regs::ID, regs::MEAS_CFG, regs::COEF]
+        );
     }
 
     #[test]
     fn default_oversampling_needs_no_result_shift() {
         let mut sensor = SPL06::new(FakeSpl06::default(), ADDRESS);
-        sensor.init().expect("init should succeed against the fake");
+        sensor.init(&mut NoDelay).expect("init should succeed against the fake");
 
         let writes = sensor.i2c.writes.borrow().clone();
         let (_, cfg_reg) = writes
@@ -373,7 +415,7 @@ mod tests {
     #[test]
     fn init_rejects_a_wrong_product_id() {
         let mut sensor = SPL06::new(WrongIdBus, ADDRESS);
-        let error = sensor.init().expect_err("wrong chip ID must be rejected");
+        let error = sensor.init(&mut NoDelay).expect_err("wrong chip ID must be rejected");
         assert!(matches!(error, Error::InvalidDevice(0x11)));
     }
 
@@ -412,9 +454,74 @@ mod tests {
     }
 
     #[test]
+    fn init_waits_for_the_coefficients_to_become_valid() {
+        let bus = FakeSpl06 {
+            startup_polls_left: Cell::new(3),
+            ..FakeSpl06::default()
+        };
+        let mut sensor = SPL06::new(bus, ADDRESS);
+
+        sensor
+            .init(&mut NoDelay)
+            .expect("init must wait out the window before the coefficients are valid");
+
+        // The calibration block may only be read once the part reports its
+        // coefficients as valid. Reading it earlier is what produced a silent
+        // all-zero calibration and, with it, 0 Pa and 0.00 degC forever.
+        let reads = sensor.i2c.reads.borrow().clone();
+        let first_coef = reads
+            .iter()
+            .position(|reg| *reg == regs::COEF)
+            .expect("init must read the calibration block");
+        let status_polls = reads[..first_coef].iter().filter(|reg| **reg == regs::MEAS_CFG).count();
+
+        assert_eq!(
+            status_polls, 4,
+            "expected 3 not-yet-valid polls plus the one that reports valid before COEF: {reads:02X?}"
+        );
+
+        // And the coefficients it waited for are the real ones, not a blank block.
+        assert_eq!(sensor.calib.c0, 203);
+        assert_eq!(sensor.calib.c00, 81306);
+    }
+
+    #[test]
+    fn init_times_out_when_the_coefficients_never_become_valid() {
+        let bus = FakeSpl06 {
+            status: regs::TMP_RDY | regs::PRS_RDY,
+            ..FakeSpl06::default()
+        };
+        let mut sensor = SPL06::new(bus, ADDRESS);
+
+        let error = sensor
+            .init(&mut NoDelay)
+            .expect_err("init must not accept a part whose coefficients never become valid");
+
+        assert!(matches!(error, Error::Timeout));
+    }
+
+    /// `SENSOR_RDY` (bit 6) is not a precondition for reading the coefficient
+    /// block - `COEF_RDY` (bit 7) is - so a part that reports its coefficients
+    /// without reporting sensor initialisation must still initialise.
+    #[test]
+    fn init_does_not_require_the_sensor_ready_flag() {
+        let bus = FakeSpl06 {
+            status: regs::COEF_RDY | regs::TMP_RDY | regs::PRS_RDY,
+            ..FakeSpl06::default()
+        };
+        let mut sensor = SPL06::new(bus, ADDRESS);
+
+        sensor
+            .init(&mut NoDelay)
+            .expect("COEF_RDY alone must be enough to read the coefficients");
+
+        assert_eq!(sensor.calib.c00, 81306);
+    }
+
+    #[test]
     fn measure_compensates_the_raw_registers() {
         let mut sensor = SPL06::new(FakeSpl06::default(), ADDRESS);
-        sensor.init().expect("init should succeed against the fake");
+        sensor.init(&mut NoDelay).expect("init should succeed against the fake");
 
         let measurements = sensor.measure(&mut NoDelay).expect("measure should succeed");
 
@@ -443,7 +550,7 @@ mod tests {
             ..FakeSpl06::default()
         };
         let mut sensor = SPL06::new(bus, ADDRESS);
-        sensor.init().expect("init should succeed against the fake");
+        sensor.init(&mut NoDelay).expect("init should succeed against the fake");
 
         let error = sensor
             .measure(&mut NoDelay)
@@ -455,7 +562,7 @@ mod tests {
     #[test]
     fn reset_marks_the_driver_uncalibrated() {
         let mut sensor = SPL06::new(FakeSpl06::default(), ADDRESS);
-        sensor.init().expect("init should succeed against the fake");
+        sensor.init(&mut NoDelay).expect("init should succeed against the fake");
         sensor.reset(&mut NoDelay).expect("reset should succeed");
 
         let writes = sensor.i2c.writes.borrow().clone();
