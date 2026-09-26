@@ -1,6 +1,6 @@
 //! Driver for MPU6050.
 
-#![no_std]
+#![cfg_attr(not(test), no_std)]
 
 pub mod blocking;
 
@@ -184,6 +184,17 @@ impl GyroRange {
             GyroRange::Deg2000 => 16.4,
         }
     }
+
+    /// `FS_SEL` field value for `GYRO_CONFIG`.
+    ///
+    /// `FS_SEL` lives in bits 4:3, so the discriminant has to be shifted.
+    /// Writing it unshifted leaves the chip on its default range while the
+    /// conversion maths assumes the requested one, silently scaling every gyro
+    /// reading (Deg1000 was 4x too large).
+    #[inline]
+    pub const fn config_bits(self) -> u8 {
+        (self as u8) << 3
+    }
 }
 
 /// AFS_SEL
@@ -210,6 +221,12 @@ impl AccelRange {
             AccelRange::G8 => 4096.0,
             AccelRange::G16 => 2048.0,
         }
+    }
+
+    /// `AFS_SEL` field value for `ACCEL_CONFIG`, which also lives in bits 4:3.
+    #[inline]
+    pub const fn config_bits(self) -> u8 {
+        (self as u8) << 3
     }
 }
 
@@ -258,10 +275,12 @@ impl<I2C: embedded_hal_async::i2c::I2c> MPU6050<I2C> {
         self.write_reg(regs::CONFIG, config.lpf as u8).await?;
 
         // gyro ADC scale
-        self.write_reg(regs::GYRO_CONFIG, config.gyro_range as u8).await?;
+        self.write_reg(regs::GYRO_CONFIG, config.gyro_range.config_bits())
+            .await?;
 
         // accel ADC scale
-        self.write_reg(regs::ACCEL_CONFIG, config.accel_range as u8).await?;
+        self.write_reg(regs::ACCEL_CONFIG, config.accel_range.config_bits())
+            .await?;
 
         self.gyro_range = config.gyro_range;
         self.accel_range = config.accel_range;
@@ -336,5 +355,43 @@ impl<I2C: embedded_hal_async::i2c::I2c> MPU6050<I2C> {
     pub async fn write_reg(&mut self, reg: u8, value: u8) -> Result<(), Error<I2C::Error>> {
         self.i2c.write(self.addr, &[reg, value]).await?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gyro_range_lands_in_fs_sel() {
+        // Regression test: these used to be written unshifted, so every range
+        // except Deg250 silently left the chip on +/-250 deg/s.
+        assert_eq!(GyroRange::Deg250.config_bits(), 0b0000_0000);
+        assert_eq!(GyroRange::Deg500.config_bits(), 0b0000_1000);
+        assert_eq!(GyroRange::Deg1000.config_bits(), 0b0001_0000);
+        assert_eq!(GyroRange::Deg2000.config_bits(), 0b0001_1000);
+
+        for range in [
+            GyroRange::Deg250,
+            GyroRange::Deg500,
+            GyroRange::Deg1000,
+            GyroRange::Deg2000,
+        ] {
+            let fs_sel = (range.config_bits() >> 3) & 0b11;
+            assert_eq!(fs_sel, range as u8, "FS_SEL must encode the requested range");
+        }
+    }
+
+    #[test]
+    fn accel_range_lands_in_afs_sel() {
+        assert_eq!(AccelRange::G2.config_bits(), 0b0000_0000);
+        assert_eq!(AccelRange::G4.config_bits(), 0b0000_1000);
+        assert_eq!(AccelRange::G8.config_bits(), 0b0001_0000);
+        assert_eq!(AccelRange::G16.config_bits(), 0b0001_1000);
+
+        for range in [AccelRange::G2, AccelRange::G4, AccelRange::G8, AccelRange::G16] {
+            let afs_sel = (range.config_bits() >> 3) & 0b11;
+            assert_eq!(afs_sel, range as u8, "AFS_SEL must encode the requested range");
+        }
     }
 }

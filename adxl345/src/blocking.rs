@@ -1,4 +1,4 @@
-use super::{regs, Config, Error, Range, PRIMARY_ADDRESS, SECONDARY_ADDRESS};
+use super::{Config, Error, PRIMARY_ADDRESS, Range, SECONDARY_ADDRESS, regs};
 
 /// A struct representing the ADXL345 accelerometer.
 //

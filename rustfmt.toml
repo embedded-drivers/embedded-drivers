@@ -1,3 +1,10 @@
+# Formatting is enforced in CI with `cargo +nightly fmt --all --check`.
+#
+# `group_imports` and `imports_granularity` are nightly-only rustfmt options.
+# On stable, rustfmt ignores them and prints a warning, which would make the CI
+# check disagree with a local `cargo fmt` run - so always format with nightly:
+#
+#     cargo +nightly fmt --all
 group_imports = "StdExternalCrate"
 imports_granularity = "Module"
 max_width = 120

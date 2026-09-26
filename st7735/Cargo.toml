@@ -20,3 +20,6 @@ embedded-graphics-core.workspace = true
 [features]
 default = []
 std = []
+
+[lints]
+workspace = true

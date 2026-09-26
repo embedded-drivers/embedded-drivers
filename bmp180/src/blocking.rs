@@ -2,7 +2,7 @@ use embedded_hal::delay::DelayNs;
 #[allow(unused)]
 use micromath::F32Ext;
 
-use super::{cmds, regs, CalibrationData, Config, Error, Measurement, Mode, ADDRESS};
+use super::{ADDRESS, CalibrationData, Config, Error, Measurement, Mode, cmds, regs};
 
 /// BMP180, or BMP085.
 pub struct BMP180<I2C: embedded_hal::i2c::I2c> {
@@ -20,7 +20,7 @@ impl<I2C: embedded_hal::i2c::I2c> BMP180<I2C> {
             i2c,
             addr,
             mode: Mode::UltraHighResolution,
-            calib: unsafe { core::mem::zeroed() },
+            calib: Default::default(),
         }
     }
 

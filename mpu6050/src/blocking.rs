@@ -1,4 +1,4 @@
-use crate::{consts, regs, AccelRange, Config, Error, GyroRange, PRIMARY_ADDRESS};
+use crate::{AccelRange, Config, Error, GyroRange, PRIMARY_ADDRESS, consts, regs};
 
 pub struct MPU6050<I2C: embedded_hal::i2c::I2c> {
     addr: u8,
@@ -38,10 +38,10 @@ impl<I2C: embedded_hal::i2c::I2c> MPU6050<I2C> {
         self.write_reg(regs::CONFIG, config.lpf as u8)?;
 
         // gyro ADC scale
-        self.write_reg(regs::GYRO_CONFIG, config.gyro_range as u8)?;
+        self.write_reg(regs::GYRO_CONFIG, config.gyro_range.config_bits())?;
 
         // accel ADC scale
-        self.write_reg(regs::ACCEL_CONFIG, config.accel_range as u8)?;
+        self.write_reg(regs::ACCEL_CONFIG, config.accel_range.config_bits())?;
 
         self.gyro_range = config.gyro_range;
         self.accel_range = config.accel_range;

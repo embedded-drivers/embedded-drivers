@@ -1,6 +1,6 @@
 use embedded_hal::delay::DelayNs;
 
-use crate::{cmds, Error, Resolution, ADDRESS};
+use crate::{ADDRESS, Error, Resolution, cmds};
 
 pub struct SHT20<I2C: embedded_hal::i2c::I2c> {
     addr: u8,
@@ -17,13 +17,14 @@ impl<I2C: embedded_hal::i2c::I2c> SHT20<I2C> {
         }
     }
 
-    pub fn set_resolution(&mut self, resolution: Resolution) {
+    pub fn set_resolution(&mut self, resolution: Resolution) -> Result<(), Error<I2C::Error>> {
         self.resolution = resolution;
 
-        let mut bits = (resolution as u8);
-        bits = bits | 0b10; // disable on-chip heater, enable OTP reload
+        let mut bits = resolution as u8;
+        bits |= 0b10; // disable on-chip heater, enable OTP reload
 
-        self.i2c.write(self.addr, &[cmds::WRITE_REG, bits]).unwrap();
+        self.i2c.write(self.addr, &[cmds::WRITE_REG, bits])?;
+        Ok(())
     }
 
     pub fn read_temperature(&mut self, mut delay: impl DelayNs) -> Result<f32, Error<I2C::Error>> {

@@ -2,7 +2,7 @@
 
 use embedded_hal::delay::DelayNs;
 
-use crate::{regs, CalibrationData, Error, Measurements, ADDRESS, CHIP_ID_BME280, CHIP_ID_BMP280};
+use crate::{ADDRESS, CHIP_ID_BME280, CHIP_ID_BMP280, CalibrationData, Error, Measurements, regs};
 
 pub struct BME280<I2C: embedded_hal::i2c::I2c> {
     addr: u8,
@@ -34,7 +34,9 @@ impl<I2C: embedded_hal::i2c::I2c> BME280<I2C> {
             return Err(Error::InvalidDevice);
         }
 
-        // set normal mode, temp and pressure oversampling x1
+        // Normal mode, temp and pressure oversampling x1. The 3/3/2 grouping
+        // mirrors CTRL_MEAS exactly: osrs_t[7:5], osrs_p[4:2], mode[1:0].
+        #[allow(clippy::unusual_byte_groupings)]
         self.write_reg(regs::CTRL_MEAS, 0b001_001_11)?;
         self.write_reg(regs::CTRL_HUM, 0b001)?;
 

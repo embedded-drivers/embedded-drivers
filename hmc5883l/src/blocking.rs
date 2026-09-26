@@ -1,6 +1,6 @@
 //! Driver implementation in blocking mode
 
-use crate::{regs, Config, Error, Gain, ADDRESS};
+use crate::{ADDRESS, Config, Error, Gain, regs};
 
 pub struct HMC5883L<I2C: embedded_hal::i2c::I2c> {
     i2c: I2C,

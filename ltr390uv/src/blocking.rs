@@ -1,6 +1,6 @@
 use embedded_hal::delay::DelayNs;
 
-use crate::{regs, Config, Error, ADDRESS};
+use crate::{ADDRESS, Config, Error, regs};
 
 pub struct LTR390UV<I2C: embedded_hal::i2c::I2c> {
     i2c: I2C,

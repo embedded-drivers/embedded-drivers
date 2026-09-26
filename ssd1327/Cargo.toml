@@ -16,6 +16,13 @@ categories.workspace = true
 embedded-hal.workspace = true
 embedded-hal-async.workspace = true
 
+[dev-dependencies]
+# Only for the framebuffer doc examples, so `cargo test` verifies them.
+embedded-graphics.workspace = true
+
 [features]
 default = []
 std = []
+
+[lints]
+workspace = true

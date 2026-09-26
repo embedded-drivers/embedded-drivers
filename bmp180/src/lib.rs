@@ -73,6 +73,7 @@ impl Mode {
 }
 
 #[allow(unused)]
+#[derive(Default)]
 struct CalibrationData {
     ac1: i16,
     ac2: i16,
@@ -142,7 +143,7 @@ impl<I2C: embedded_hal_async::i2c::I2c> BMP180<I2C> {
             i2c,
             addr,
             mode: Mode::UltraHighResolution,
-            calib: unsafe { core::mem::zeroed() },
+            calib: Default::default(),
         }
     }
 

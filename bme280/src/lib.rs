@@ -53,7 +53,7 @@ impl<E> From<E> for Error<E> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct CalibrationData {
     pub dig_t1: u16,
     pub dig_t2: i16,
@@ -76,15 +76,10 @@ pub struct CalibrationData {
     pub dig_h6: i8,
 }
 
-impl Default for CalibrationData {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl CalibrationData {
-    pub const fn new() -> Self {
-        unsafe { core::mem::zeroed() }
+    /// Placeholder used until `init` reads the real values from the device.
+    pub fn new() -> Self {
+        Self::default()
     }
 
     fn from_raw(raw: &[u8]) -> Self {
@@ -173,7 +168,9 @@ impl<I2C: embedded_hal_async::i2c::I2c> BME280<I2C> {
             return Err(Error::InvalidDevice);
         }
 
-        // set normal mode, temp and pressure oversampling x1
+        // Normal mode, temp and pressure oversampling x1. The 3/3/2 grouping
+        // mirrors CTRL_MEAS exactly: osrs_t[7:5], osrs_p[4:2], mode[1:0].
+        #[allow(clippy::unusual_byte_groupings)]
         self.write_reg(regs::CTRL_MEAS, 0b001_001_11).await?;
         self.write_reg(regs::CTRL_HUM, 0b001).await?;
 
@@ -308,7 +305,7 @@ fn convert_pressure(adc_p: i32, t_fine: i32, calib_data: &CalibrationData) -> i6
     var1 = ((var1 * var1 * calib_data.dig_p3 as i64) >> 8) + ((var1 * calib_data.dig_p2 as i64) << 12);
     var1 = (((1i64 << 47) + var1) * (calib_data.dig_p1 as i64)) >> 33;
 
-    let p = if var1 == 0 {
+    if var1 == 0 {
         0
     } else {
         let mut p = 1048576 - adc_p as i64;
@@ -318,9 +315,7 @@ fn convert_pressure(adc_p: i32, t_fine: i32, calib_data: &CalibrationData) -> i6
 
         p = ((p + var1 + var2) >> 8) + ((calib_data.dig_p7 as i64) << 4);
         p
-    };
-
-    p
+    }
 }
 
 /// Returns Q22.10 format

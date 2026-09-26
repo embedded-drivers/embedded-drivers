@@ -4,8 +4,8 @@
 
 use embedded_graphics_core::pixelcolor::Rgb565;
 use embedded_graphics_core::prelude::*;
-use embedded_hal::delay::DelayNs;
 use embedded_hal::digital::OutputPin;
+use embedded_hal_async::delay::DelayNs;
 
 pub mod blocking;
 
@@ -105,9 +105,9 @@ impl<SPEC: DisplaySpec, SPI: embedded_hal_async::spi::SpiDevice, DC: OutputPin> 
 
     pub async fn init(&mut self, mut delay: impl DelayNs) -> Result<(), Error<SPI::Error>> {
         self.send_command(cmds::SWRESET).await?;
-        delay.delay_ms(20);
+        delay.delay_ms(20).await;
         self.send_command(cmds::SLPOUT).await?;
-        delay.delay_ms(200);
+        delay.delay_ms(200).await;
 
         self.send_command_data(cmds::FRMCTR1, &[0x01, 0x2C, 0x2D]).await?;
         self.send_command_data(cmds::FRMCTR2, &[0x01, 0x2C, 0x2D]).await?;
@@ -129,12 +129,12 @@ impl<SPEC: DisplaySpec, SPI: embedded_hal_async::spi::SpiDevice, DC: OutputPin> 
 
         // BITS:
         // MY, MX, MV, ML, RGB, MH, D1, D0
-        self.send_command_data(cmds::MADCTL, &[0b0110_10_00]).await?;
+        self.send_command_data(cmds::MADCTL, &[0b0110_1000]).await?;
 
         self.send_command_data(cmds::COLMOD, &[0x05]).await?; // 16-bit/pixel
         self.send_command(cmds::DISPON).await?;
 
-        delay.delay_ms(100);
+        delay.delay_ms(100).await;
 
         Ok(())
     }

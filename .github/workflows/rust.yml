@@ -8,6 +8,9 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # A missing `.await` or similar is only a warning by default, which is how the
+  # sht20 async delay bug survived. Make warnings fatal.
+  RUSTFLAGS: -Dwarnings
 
 jobs:
   build:
@@ -16,5 +19,21 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+
     - name: Build
       run: cargo build --all --verbose
+
+    - name: Test
+      run: cargo test --all --verbose
+
+    # rustfmt.toml uses `group_imports` and `imports_granularity`, which are
+    # nightly-only, so the formatting gate must run on nightly or it would
+    # disagree with `cargo +nightly fmt` used locally.
+    - name: Install nightly rustfmt and clippy
+      run: rustup toolchain install nightly --profile minimal --component rustfmt,clippy
+
+    - name: Format
+      run: cargo +nightly fmt --all --check
+
+    - name: Clippy
+      run: cargo +nightly clippy --all --all-targets -- -D warnings

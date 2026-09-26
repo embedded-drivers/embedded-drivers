@@ -19,3 +19,6 @@ embedded-hal-async.workspace = true
 [features]
 default = []
 std = []
+
+[lints]
+workspace = true

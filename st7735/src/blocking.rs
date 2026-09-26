@@ -4,7 +4,7 @@ use embedded_graphics_core::primitives::Rectangle;
 use embedded_hal::delay::DelayNs;
 use embedded_hal::digital::OutputPin;
 
-use super::{cmds, DisplaySpec, Error};
+use super::{DisplaySpec, Error, cmds};
 
 pub struct ST7735<SPEC, SPI, DC> {
     spi: SPI,
@@ -47,7 +47,7 @@ impl<SPEC: DisplaySpec, SPI: embedded_hal::spi::SpiDevice, DC: OutputPin> ST7735
 
         // BITS:
         // MY, MX, MV, ML, RGB, MH, _D1, _D0
-        self.send_command_data(cmds::MADCTL, &[0b0110_10_00])?;
+        self.send_command_data(cmds::MADCTL, &[0b0110_1000])?;
 
         self.send_command_data(cmds::COLMOD, &[0x05])?; // 16-bit/pixel
         self.send_command(cmds::DISPON)?;

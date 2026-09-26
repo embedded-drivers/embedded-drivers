@@ -2,7 +2,10 @@
 //!
 //! # Examples
 //!
-//! ```
+//! This snippet shows how the driver is wired up in an application, using that
+//! application's HAL, so it is not compiled as a doctest.
+//!
+//! ```ignore
 //! use embedded_graphics::framebuffer::Framebuffer;
 //!
 //! let dc = Output::new(r.dc, Level::Low, Default::default());
@@ -78,9 +81,12 @@ impl<E> From<E> for Error<E> {
 /// Framebuffer format:
 ///
 /// ```
-/// let mut fb = Framebuffer::<Gray4, _, LittleEndian, 128, 128, { embedded_graphics::framebuffer::buffer_size::<Gray4>(128, 128) }>::new();
-/// // or
-/// let mut fb = Framebuffer::<Gray4, _, LittleEndian, 128, 128, { 128 * 128 / 2 }>::new();
+/// use embedded_graphics::framebuffer::{buffer_size, Framebuffer};
+/// use embedded_graphics::pixelcolor::{raw::LittleEndian, Gray4};
+///
+/// let _fb = Framebuffer::<Gray4, _, LittleEndian, 128, 128, { buffer_size::<Gray4>(128, 128) }>::new();
+/// // or, equivalently, 4 bits per pixel:
+/// let _fb = Framebuffer::<Gray4, _, LittleEndian, 128, 128, { 128 * 128 / 2 }>::new();
 /// ```
 pub struct SSD1327<SPI: embedded_hal_async::spi::SpiDevice, DC: OutputPin> {
     spi: SPI,

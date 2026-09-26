@@ -1,4 +1,4 @@
-use super::{regs, Config, Error, Scale, ADDRESS};
+use super::{ADDRESS, Config, Error, Scale, regs};
 
 pub struct L3G4200D<I2C: embedded_hal::i2c::I2c> {
     i2c: I2C,
