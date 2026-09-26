@@ -33,10 +33,28 @@ pub const CHIP_ID_BMP280: u8 = 0x58;
 pub const CONTROL_WRITES: [(u8, u8); 2] = [
     // osrs_h = x1.
     (regs::CTRL_HUM, 0b001),
-    // osrs_t = x1, osrs_p = x1, mode = normal. The 3/3/2 grouping mirrors
-    // CTRL_MEAS exactly: osrs_t[7:5], osrs_p[4:2], mode[1:0].
-    (regs::CTRL_MEAS, 0b001_001_11),
+    // osrs_t = x1, osrs_p = x1, mode = sleep. The 3/3/2 grouping mirrors
+    // CTRL_MEAS exactly: osrs_t[7:5], osrs_p[4:2], mode[1:0]. The part is left
+    // idle deliberately: `read_measurement` triggers a forced conversion and
+    // waits for it, which is what makes a returned measurement trustworthy.
+    (regs::CTRL_MEAS, 0b001_001_00),
 ];
+
+/// `CTRL_MEAS` with x1 oversampling on temperature and pressure, and
+/// `mode = forced`: triggers exactly one conversion and then returns to sleep.
+///
+/// Same 3/3/2 field grouping as [`CONTROL_WRITES`], hence the allow.
+#[allow(clippy::unusual_byte_groupings)]
+pub(crate) const CTRL_MEAS_FORCED: u8 = 0b001_001_01;
+
+/// Datasheet measurement time at x1 oversampling on all three channels.
+///
+/// The formula is `1.25 + 2.3*osrs_t + (2.3*osrs_p + 0.575) + (2.3*osrs_h + 0.575)`
+/// ms, which is about 9.3 ms at x1/x1/x1. Rounded up.
+const MEASUREMENT_TIME_MS: u32 = 10;
+
+/// Extra 1 ms polling budget after the fixed wait, before giving up.
+const MEASUREMENT_POLL_LIMIT_MS: u32 = 20;
 
 pub mod blocking;
 
@@ -62,6 +80,17 @@ pub mod regs {
     pub const CTRL_HUM: u8 = 0xF2;
 
     pub const STATUS: u8 = 0xF3;
+
+    /// `status`: a conversion is currently running.
+    pub const STATUS_MEASURING: u8 = 0x08;
+    /// `status`: the NVM calibration data is being copied into the image
+    /// registers. Reading calibration before this clears gives garbage.
+    pub const STATUS_IM_UPDATE: u8 = 0x01;
+
+    /// `press_msb`: start of the 8-byte pressure/temperature/humidity block.
+    pub const DATA_MSB: u8 = 0xF7;
+    /// Length of that block: `press(3) + temp(3) + hum(2)`.
+    pub const DATA_LEN: usize = 8;
     pub const RESET: u8 = 0xE0;
 }
 
@@ -72,6 +101,10 @@ pub enum Error<E> {
     ConversionError,
     InvalidDevice,
     UnsupportedMeasurement,
+    /// The device did not report a completed conversion within the driver's
+    /// polling limit. Added in 0.1.1; the enum is not `#[non_exhaustive]`, so a
+    /// caller matching exhaustively must handle it.
+    Timeout,
 }
 
 impl<E> From<E> for Error<E> {
@@ -252,35 +285,95 @@ impl<I2C: embedded_hal_async::i2c::I2c> BME280<I2C> {
         Ok((hum_msb << 8) | hum_lsb)
     }
 
-    pub async fn read_measurement(&mut self) -> Result<Measurements, Error<I2C::Error>> {
-        // Returns temperature in DegC, resolution is 0.01 DegC. Output value of “5123” equals 51.23 DegC.
+    /// Trigger a measurement, wait for the device to finish it, then read the
+    /// compensated result.
+    ///
+    /// **Waiting here is the whole point.** Until a conversion completes, the
+    /// BME280's data registers hold `0x80000` - its 20-bit "measurement skipped"
+    /// marker - and those placeholder bytes decode through the compensation
+    /// maths to values that look *plausible* rather than obviously wrong: about
+    /// 2.4 degC low, and a pressure about a **third** low, because `t_fine` is
+    /// derived from the bogus temperature. Versions before 0.1.1 read the
+    /// registers straight after `init` and returned exactly that, with no error
+    /// and no other symptom.
+    ///
+    /// The sequence is therefore:
+    ///
+    /// 1. write `mode = forced`, so exactly one conversion runs;
+    /// 2. wait the datasheet's measurement time;
+    /// 3. confirm `status.measuring` has cleared, as a belt-and-braces check;
+    /// 4. read the whole pressure/temperature/humidity block in **one burst**,
+    ///    as Bosch's `bme280_get_sensor_data` does, so the three values always
+    ///    come from the same conversion.
+    ///
+    /// Step 2 is a fixed wait rather than an immediate poll on purpose: right
+    /// after the write the device may not have set `measuring` yet, so polling
+    /// straight away can see "not measuring" and read the *previous* result.
+    ///
+    /// `delay` paces steps 2 and 3. The driver programs x1 oversampling on all
+    /// three channels, which the datasheet's measurement-time formula puts at
+    /// about 9.3 ms.
+    pub async fn read_measurement(&mut self, mut delay: impl DelayNs) -> Result<Measurements, Error<I2C::Error>> {
+        self.start_forced_measurement().await?;
+        self.wait_for_measurement(&mut delay).await?;
+
+        let mut raw = [0u8; regs::DATA_LEN];
+        self.read_regs(regs::DATA_MSB, &mut raw).await?;
+
+        Ok(self.compensate(&raw))
+    }
+
+    /// Write `mode = forced`, keeping the x1 oversampling programmed by `init`.
+    async fn start_forced_measurement(&mut self) -> Result<(), Error<I2C::Error>> {
+        self.write_reg(regs::CTRL_MEAS, CTRL_MEAS_FORCED).await
+    }
+
+    /// Wait out the conversion, then verify it really finished.
+    async fn wait_for_measurement(&mut self, delay: &mut impl DelayNs) -> Result<(), Error<I2C::Error>> {
+        // The datasheet's measurement-time formula at x1/x1/x1 is ~9.3 ms.
+        delay.delay_ms(MEASUREMENT_TIME_MS).await;
+
+        let mut extra = 0;
+        while self.read_reg(regs::STATUS).await? & regs::STATUS_MEASURING != 0 {
+            if extra >= MEASUREMENT_POLL_LIMIT_MS {
+                return Err(Error::Timeout);
+            }
+            delay.delay_ms(1).await;
+            extra += 1;
+        }
+        Ok(())
+    }
+
+    /// Decode the 8-byte `press | temp | hum` block and compensate it.
+    ///
+    /// Field order follows Bosch's `parse_sensor_data`.
+    fn compensate(&self, raw: &[u8; regs::DATA_LEN]) -> Measurements {
+        let adc_p = ((raw[0] as i32) << 12) | ((raw[1] as i32) << 4) | ((raw[2] as i32) >> 4);
+        let adc_t = ((raw[3] as i32) << 12) | ((raw[4] as i32) << 4) | ((raw[5] as i32) >> 4);
+        let adc_h = ((raw[6] as i32) << 8) | (raw[7] as i32);
+
+        // Returns temperature in DegC, resolution is 0.01 DegC.
         // t_fine carries fine temperature as global value
-        let adc_t = self.read_raw_temperature().await?;
         let (t_fine, t) = convert_temperature(adc_t, &self.calib);
 
-        // Returns pressure in Pa as unsigned 32 bit integer in Q24.8 format (24 integer bits and 8 fractional bits).
-        // Output value of “24674867” represents 24674867/256 = 96386.2 Pa = 963.862 hPa
-        let adc_p = self.read_raw_pressure().await?;
+        // Pressure in Q24.8 Pa; converted to centi-pascal below.
         let p = convert_pressure(adc_p, t_fine, &self.calib);
-
-        // convert Q24.8 to centi
         let p = p * 100 / 256;
 
         // BME280 only
         let mut h = 0;
         if self.is_bme280 {
-            let adc_h = self.read_raw_humidity().await?;
             let h0 = convert_humidity(adc_h, t_fine, &self.calib);
 
             // convert Q22.10 to centi
             h = h0 * 100 / 1024;
-        };
+        }
 
-        Ok(Measurements {
+        Measurements {
             temperature: t,
             pressure: p as u32,
             humidity: h,
-        })
+        }
     }
 
     pub async fn read_reg(&mut self, reg: u8) -> Result<u8, Error<I2C::Error>> {
