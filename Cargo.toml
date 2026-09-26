@@ -11,6 +11,8 @@ members = [
     "sht20",
     "ltr390uv",
     "mpu6050",
+    "mhz19",
+    "pmsx003",
 ]
 
 exclude = ["template"]
@@ -32,6 +34,9 @@ embedded-hal = "1.0.0"
 embedded-hal-async = "1.0.0"
 embedded-graphics-core = "0.4.1"
 embedded-graphics = "0.8.2"
+# Byte-stream transports for the UART sensors (MH-Z19, PMSx003).
+embedded-io = "0.7.1"
+embedded-io-async = "0.7.0"
 
 [workspace.lints.rust]
 # These are hardware drivers; there is no reason for unsafe, and a panic in a

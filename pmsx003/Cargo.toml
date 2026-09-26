@@ -1,0 +1,24 @@
+[package]
+name = "edrv-pmsx003"
+documentation = "https://docs.rs/edrv-pmsx003"
+description = "Driver for Plantower PMSx003 particulate sensors (PMS1003/3003/5003/7003/9003), maintained by the embedded-drivers team"
+keywords = ["no-std", "embedded", "embedded-hal-driver", "pm2.5"]
+readme = "README.md"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+license.workspace = true
+categories.workspace = true
+
+[dependencies]
+embedded-io.workspace = true
+embedded-io-async.workspace = true
+
+[features]
+default = []
+std = []
+
+[lints]
+workspace = true
