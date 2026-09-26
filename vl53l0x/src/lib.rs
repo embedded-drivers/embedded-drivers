@@ -2,8 +2,8 @@
 //!
 //! The VL53L0X reports a distance in millimetres. The sensor uses 16-bit
 //! register addresses on the wire, but every register used by this driver lives
-//! below `0x100`, so the address is transmitted as a single byte exactly like
-//! the proven reference driver this code was ported from.
+//! below `0x100`, so the address is transmitted as a single byte, matching the
+//! reference driver.
 //!
 //! This module contains the asynchronous driver. See [`blocking`] for the
 //! blocking variant.
@@ -576,7 +576,7 @@ impl<I2C: embedded_hal_async::i2c::I2c> VL53L0X<I2C> {
         // Big-endian, matching ST's `VL53L0X_WrDWord`, Pololu's `writeReg32Bit`
         // and every other multi-byte value in this driver.
         //
-        // NOTE: the `vl53l0x` crate this was ported from serialises this one
+        // NOTE: the `vl53l0x` reference serialises this one
         // value the other way round, which contradicts its own big-endian
         // register reads. The effect is limited to `start_continuous` with a
         // non-zero period: the common back-to-back case writes all zeros, where

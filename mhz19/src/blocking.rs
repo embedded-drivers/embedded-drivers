@@ -108,8 +108,8 @@ where
 
     /// Span point calibration (`0x88`) against a known reference gas.
     ///
-    /// Do the zero calibration first. Rejects spans below 1000 ppm, matching the
-    /// reference driver. Send-only.
+    /// Do the zero calibration first. Rejects spans below 1000 ppm, which is the
+    /// lowest span the sensor documents. Send-only.
     pub fn calibrate_span(&mut self, span_ppm: u16) -> Result<(), Error<UART::Error>> {
         if span_ppm < crate::RANGE_MIN_PPM {
             return Err(Error::InvalidArgument);

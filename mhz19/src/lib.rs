@@ -27,9 +27,9 @@
 //! therefore blocks forever rather than returning an error: wrap the transport
 //! (or the future) with a timeout in the application if that matters.
 //!
-//! For the same reason the calibration commands, which the reference driver
-//! sends without reading a reply, are send-only here. A sensor that does not
-//! answer them would otherwise hang the caller.
+//! For the same reason the calibration commands, which the Winsen datasheet
+//! specifies as commands the sensor does not answer, are send-only here. A
+//! sensor that does not answer them would otherwise hang the caller.
 //!
 //! # Resynchronising
 //!
@@ -86,7 +86,7 @@ pub enum Error<E> {
     InvalidArgument,
 }
 
-/// Checksum over bytes 1..=7, matching the reference implementation
+/// Checksum over bytes 1..=7, as specified by the Winsen datasheet
 /// (`255 - sum; sum++`).
 pub fn checksum(packet: &[u8; PACKET_LEN]) -> u8 {
     let sum = packet[1..PACKET_LEN - 1]
@@ -114,8 +114,9 @@ pub struct Reading {
     pub temperature_c: i16,
     /// The status/accuracy byte, `response[5]`.
     pub status: u8,
-    /// `response[6..8]`. The reference driver notes this needs further
-    /// calculation before it is usable, so treat it as diagnostic only.
+    /// `response[6..8]`. The datasheet does not define this field, and community
+    /// documentation reports that it needs further calculation before it means
+    /// anything, so treat it as diagnostic only.
     pub min_co2_ppm: u16,
 }
 
@@ -248,8 +249,8 @@ where
 
     /// Span point calibration (`0x88`) against a known reference gas.
     ///
-    /// Do the zero calibration first. Rejects spans below 1000 ppm, matching the
-    /// reference driver. Send-only.
+    /// Do the zero calibration first. Rejects spans below 1000 ppm, which is the
+    /// lowest span the sensor documents. Send-only.
     pub async fn calibrate_span(&mut self, span_ppm: u16) -> Result<(), Error<UART::Error>> {
         if span_ppm < RANGE_MIN_PPM {
             return Err(Error::InvalidArgument);

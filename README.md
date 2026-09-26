@@ -35,7 +35,6 @@ Being the "Adafruit" of Rust embedded ecosystem, providing the most up-to-date, 
 - **Ease of use**: Prioritize simplicity and intuitive interfaces tailored to embedded developers, even those new to Rust.
 - **Unified style**: Changing to another IC or display? just rename the IC in crate name.
 - **Practical focus**: Enable core functionalities like reading sensor values without over-engineered abstractions.
-- **Direct datasheet alignment**: Facilitate easy translation from C examples thanks to consistent command naming.
 - **Customization**: Support raw register access for tailored modifications.
 - **Resource-conscious**: Optimized for size and speed, essential for embedded environments.
 - **Advanced features**: Harness DMA, interrupts, and async/await for optimal performance.

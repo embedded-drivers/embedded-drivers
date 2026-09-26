@@ -25,6 +25,13 @@ This project is maintained by the embedded-drivers team. Our organization's goal
 
 [Docs.rs link](https://docs.rs/edrv-vl53l0x/)
 
+## Reference
+
+The [`vl53l0x` crate](https://github.com/copterust/vl53l0x) (crates.io `vl53l0x`
+1.0.1): the driver structure and the initialisation sequence, including the
+tuning-settings table and the reference-calibration steps. That crate in turn
+references ST's VL53L0X API and Pololu's Arduino library.
+
 ## Contributing & License
 
 Please refer to [embedded-drivers](https://github.com/embedded-drivers/embedded-drivers)
