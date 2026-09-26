@@ -1,6 +1,8 @@
 //! Driver for ADXL345.
 
-#![no_std]
+#![cfg_attr(not(test), no_std)]
+
+use embedded_hal_async::delay::DelayNs;
 
 pub mod blocking;
 
@@ -36,7 +38,26 @@ pub mod regs {
     pub const DATAZ1: u8 = 0x37;
     pub const FIFO_CTL: u8 = 0x38;
     pub const FIFO_STATUS: u8 = 0x39;
+
+    /// `INT_SOURCE` bit 7: a new sample is available.
+    ///
+    /// Datasheet Rev. G, Register 0x30: "The DATA_READY bit is set when new data
+    /// is available and is cleared when no new data is available." The register
+    /// description adds that it is "always set if the corresponding events
+    /// occur, regardless of the INT_ENABLE register settings", so it can be
+    /// polled without routing the interrupt to a pin.
+    pub const INT_SOURCE_DATA_READY: u8 = 0x80;
 }
+
+/// `POWER_CTL` with the Measure bit (D3) set: measurement mode.
+pub const POWER_CTL_MEASURE: u8 = 0x08;
+
+/// `POWER_CTL` with every bit clear: standby mode.
+pub const POWER_CTL_STANDBY: u8 = 0x00;
+
+/// Extra polling budget added to the datasheet turn-on time before `init`
+/// gives up waiting for the first sample.
+pub(crate) const DATA_READY_POLL_MARGIN_MS: u32 = 20;
 
 pub const PRIMARY_ADDRESS: u8 = 0x53;
 pub const SECONDARY_ADDRESS: u8 = 0x1D;
@@ -45,6 +66,10 @@ pub const SECONDARY_ADDRESS: u8 = 0x1D;
 pub enum Error<IE> {
     Bus(IE),
     InvalidDevice,
+    /// The device did not report a new sample within the driver's polling
+    /// limit. `init` waits for the first sample, and returns this rather than
+    /// handing a caller data that was never measured.
+    Timeout,
 }
 
 impl<E> From<E> for Error<E> {
@@ -81,6 +106,43 @@ pub enum Rate {
     Hz0_39 = 0b0010,
     Hz0_20 = 0b0001,
     Hz0_10 = 0b0000,
+}
+
+impl Rate {
+    /// Nominal sample period in milliseconds, rounded up.
+    pub const fn period_ms(self) -> u32 {
+        match self {
+            Rate::Hz3200 => 1, // 0.3125 ms
+            Rate::Hz1600 => 1, // 0.625 ms
+            Rate::Hz800 => 2,  // 1.25 ms
+            Rate::Hz400 => 3,  // 2.5 ms
+            Rate::Hz200 => 5,  // 5 ms
+            Rate::Hz100 => 10, // 10 ms
+            Rate::Hz50 => 20,
+            Rate::Hz25 => 40,
+            Rate::Hz12_5 => 80,
+            Rate::Hz6_25 => 160,
+            Rate::Hz3_13 => 320,
+            Rate::Hz1_56 => 641,
+            Rate::Hz0_78 => 1282,
+            Rate::Hz0_39 => 2564,
+            Rate::Hz0_20 => 5000,
+            Rate::Hz0_10 => 10000,
+        }
+    }
+
+    /// Datasheet turn-on / wake-up time in milliseconds, rounded up.
+    ///
+    /// ADXL345 datasheet Rev. G, Table 1, note 7: "Turn-on and wake-up times are
+    /// determined by the user-defined bandwidth. At a 100 Hz data rate, the
+    /// turn-on and wake-up times are each approximately 11.1 ms. For other data
+    /// rates, the turn-on and wake-up times are each approximately
+    /// `1/(data rate) + 1.1` in milliseconds". The first sample after the
+    /// Measure bit is set is not available before this, so the data registers
+    /// still hold their reset value until then.
+    pub const fn turn_on_time_ms(self) -> u32 {
+        self.period_ms() + 2
+    }
 }
 
 /// Configuration settings for the ADXL345 accelerometer.
@@ -131,15 +193,30 @@ impl<I2C: embedded_hal_async::i2c::I2c> ADXL345<I2C> {
         Self::new(i2c, SECONDARY_ADDRESS)
     }
 
-    pub async fn init(&mut self, config: Config) -> Result<(), Error<I2C::Error>> {
+    /// Configure the part and wait until it has produced its first sample.
+    ///
+    /// The data registers hold their reset value (zero) from power-up until the
+    /// first conversion completes, which takes the datasheet's turn-on time
+    /// after the Measure bit is set (`1/data rate + 1.1` ms; about 11.1 ms at
+    /// the default 100 Hz). Returning from `init` before then makes a caller's
+    /// first read return `(0, 0, 0)` with no error.
+    ///
+    /// The configuration registers are therefore written while the part is
+    /// still in standby, and `init` only returns once `INT_SOURCE` reports
+    /// `DATA_READY` (or the turn-on budget expires with [`Error::Timeout`]).
+    /// Afterwards the part free-runs at the configured rate, so later reads
+    /// return the most recent sample without an additional wait.
+    pub async fn init(&mut self, config: Config, mut delay: impl DelayNs) -> Result<(), Error<I2C::Error>> {
         let id = self.read_reg(regs::DEVID).await?;
         if id != 0xE5 {
             return Err(Error::InvalidDevice);
         }
 
-        self.write_reg(regs::POWER_CTL, 0).await?; // Wake up
-        self.write_reg(regs::POWER_CTL, 16).await?; // Auto-sleep
-        self.write_reg(regs::POWER_CTL, 8).await?; // Measure
+        // The datasheet recommends clearing SLEEP/AUTO_SLEEP by passing through
+        // standby before re-entering measurement mode, and configuring the part
+        // while it is in standby.
+        self.write_reg(regs::POWER_CTL, POWER_CTL_STANDBY).await?; // Standby
+        self.write_reg(regs::POWER_CTL, 16).await?; // AUTO_SLEEP, cleared by the transition below
 
         // Set data rate and range
         let mut data_format = (config.range as u8) & 0x03;
@@ -149,6 +226,10 @@ impl<I2C: embedded_hal_async::i2c::I2c> ADXL345<I2C> {
         let bw_rate = (config.rate as u8) & 0x0F; // Set rate
         self.write_reg(regs::BW_RATE, bw_rate).await?;
 
+        // Enter measurement mode last: the turn-on time is measured from this
+        // write, so the output data rate must already be programmed.
+        self.write_reg(regs::POWER_CTL, POWER_CTL_MEASURE).await?;
+
         // Set scale factor based on the range
         self.lsb_scale = match config.range {
             Range::G2 => 4.0 / 65536.0,
@@ -157,7 +238,24 @@ impl<I2C: embedded_hal_async::i2c::I2c> ADXL345<I2C> {
             Range::G16 => 32.0 / 65536.0,
         };
 
+        self.wait_for_data_ready(config.rate, &mut delay).await?;
+
         Ok(())
+    }
+
+    /// Wait until `INT_SOURCE.DATA_READY` is set, or give up after the
+    /// datasheet's turn-on time for the configured rate plus a small margin.
+    async fn wait_for_data_ready(&mut self, rate: Rate, delay: &mut impl DelayNs) -> Result<(), Error<I2C::Error>> {
+        let budget_ms = rate.turn_on_time_ms() + DATA_READY_POLL_MARGIN_MS;
+
+        for _ in 0..=budget_ms {
+            if self.read_reg(regs::INT_SOURCE).await? & regs::INT_SOURCE_DATA_READY != 0 {
+                return Ok(());
+            }
+            delay.delay_ms(1).await;
+        }
+
+        Err(Error::Timeout)
     }
 
     /// Reads the raw acceleration data from the sensor.
