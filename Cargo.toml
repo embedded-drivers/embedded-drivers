@@ -19,7 +19,7 @@ members = [
 exclude = ["template"]
 
 [workspace.package]
-version = "0.0.1"
+version = "0.1.0"
 edition = "2024"
 # Edition 2024 needs Rust 1.85. Declaring an MSRV makes a dependency silently
 # raising it a CI failure instead of a surprise for downstream users.
