@@ -260,7 +260,7 @@ PLAN_STATUS=()
 BLOCKED=0
 UNKNOWN=0
 
-for entry in "${SELECTED[@]}"; do
+for entry in "${SELECTED[@]+"${SELECTED[@]}"}"; do
   IFS='|' read -r name version dir <<<"$entry"
   set +e
   cr_version_published "$name" "$version"
@@ -297,7 +297,7 @@ fi
 # ---------------------------------------------------------------------------
 step "Dry run"
 
-for entry in "${PLAN_STATUS[@]}"; do
+for entry in "${PLAN_STATUS[@]+"${PLAN_STATUS[@]}"}"; do
   IFS='|' read -r name version dir status <<<"$entry"
   printf '  %-16s %s ... ' "$name" "$version"
   if cargo publish --dry-run --quiet -p "$name" >/dev/null 2>&1; then
@@ -316,7 +316,7 @@ step "Plan"
 
 COUNT=${#PLAN_STATUS[@]}
 info "  $COUNT crate(s) will be published to crates.io:"
-for entry in "${PLAN_STATUS[@]}"; do
+for entry in "${PLAN_STATUS[@]+"${PLAN_STATUS[@]}"}"; do
   IFS='|' read -r name version dir status <<<"$entry"
   printf '    %s%s %s%s  (%s)\n' "$BOLD" "$name" "$version" "$RESET" "$status"
 done
@@ -349,29 +349,44 @@ fi
 step "Publishing"
 
 PUBLISHED=()
-PUBLISH_ARGS=()
-[ "$ALLOW_DIRTY" -eq 1 ] && PUBLISH_ARGS+=(--allow-dirty)
 
-for entry in "${PLAN_STATUS[@]}"; do
+# `"${arr[@]}"` on an *empty* array trips `set -u` on bash older than 4.4, which
+# includes the bash 3.2 that ships with macOS. The `+` form expands to nothing
+# instead of erroring, so every array expansion below uses it.
+publish_one() {
+  if [ "$ALLOW_DIRTY" -eq 1 ]; then
+    cargo publish --allow-dirty -p "$1"
+  else
+    cargo publish -p "$1"
+  fi
+}
+
+for entry in "${PLAN_STATUS[@]+"${PLAN_STATUS[@]}"}"; do
   IFS='|' read -r name version dir status <<<"$entry"
   printf '  %s%-16s %s%s ... ' "$BOLD" "$name" "$version" "$RESET"
-  if cargo publish "${PUBLISH_ARGS[@]}" -p "$name" >/tmp/edrv-publish-$name.log 2>&1; then
+  if publish_one "$name" >"/tmp/edrv-publish-$name.log" 2>&1; then
     printf '%sok%s\n' "$GREEN" "$RESET"
     PUBLISHED+=("$name $version")
   else
     printf '%sfailed%s\n' "$RED" "$RESET"
     tail -25 "/tmp/edrv-publish-$name.log"
     info ""
-    err "stopped at $name. Already published:"
-    for p in "${PUBLISHED[@]:-}"; do [ -n "$p" ] && info "    $p"; done
-    info ""
-    info "  Resume the remainder with:"
-    info "      scripts/publish.sh --execute --skip $(printf '%s\n' "${PUBLISHED[@]:-}" | awk '{print $1}' | paste -sd, -)"
+    err "stopped at $name."
+    if [ ${#PUBLISHED[@]} -gt 0 ]; then
+      info "  Already published:"
+      for p in "${PUBLISHED[@]+"${PUBLISHED[@]}"}"; do info "    $p"; done
+      resume=$(printf '%s\n' "${PUBLISHED[@]+"${PUBLISHED[@]}"}" | awk '{print $1}' | paste -sd, -)
+      info ""
+      info "  Resume the remainder with:"
+      info "      scripts/publish.sh --execute --skip $resume"
+    else
+      info "  Nothing was published."
+    fi
     exit 1
   fi
 done
 
 step "Done"
-for p in "${PUBLISHED[@]}"; do ok "$p"; done
+for p in "${PUBLISHED[@]+"${PUBLISHED[@]}"}"; do ok "$p"; done
 info ""
 info "  The crates.io index takes a minute to catch up; docs.rs builds follow."
