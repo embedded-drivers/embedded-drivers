@@ -1,8 +1,13 @@
 //! Driver for BME280 and BMP280.
 //!
 //! The only difference between the two sensors is that the BME280 also includes a humidity sensor.
+//!
+//! # Licence
+//!
+//! This crate is distributed as `MIT OR Apache-2.0`. It also references Bosch's
+//! BSD-3-Clause driver; the retained notice is in `LICENSE-BOSCH`.
 
-#![no_std]
+#![cfg_attr(not(test), no_std)]
 
 use embedded_hal_async::delay::DelayNs;
 
@@ -10,6 +15,28 @@ pub const ADDRESS: u8 = 0x76;
 
 pub const CHIP_ID_BME280: u8 = 0x60;
 pub const CHIP_ID_BMP280: u8 = 0x58;
+
+/// Control-register writes performed by `init`, **in this exact order**.
+///
+/// The order is a hardware requirement, not a style choice. Bosch's BME280 API
+/// documents that "humidity related changes will be only effective after a write
+/// operation to ctrl_meas register", so `CTRL_HUM` must be written *before*
+/// `CTRL_MEAS`. Written the other way round, the humidity oversampling setting is
+/// silently ignored and `osrs_h` stays at its reset default, which is `0`
+/// (skipped) - so humidity would never be measured at all.
+///
+/// These are two single-byte writes rather than one burst over `0xF2..=0xF5`,
+/// because `0xF3` is the read-only `status` register. (The BME680 can burst its
+/// equivalent `0x71..=0x75` block, but only because all five of those registers
+/// are writable.)
+#[allow(clippy::unusual_byte_groupings)]
+pub const CONTROL_WRITES: [(u8, u8); 2] = [
+    // osrs_h = x1.
+    (regs::CTRL_HUM, 0b001),
+    // osrs_t = x1, osrs_p = x1, mode = normal. The 3/3/2 grouping mirrors
+    // CTRL_MEAS exactly: osrs_t[7:5], osrs_p[4:2], mode[1:0].
+    (regs::CTRL_MEAS, 0b001_001_11),
+];
 
 pub mod blocking;
 
@@ -168,11 +195,10 @@ impl<I2C: embedded_hal_async::i2c::I2c> BME280<I2C> {
             return Err(Error::InvalidDevice);
         }
 
-        // Normal mode, temp and pressure oversampling x1. The 3/3/2 grouping
-        // mirrors CTRL_MEAS exactly: osrs_t[7:5], osrs_p[4:2], mode[1:0].
-        #[allow(clippy::unusual_byte_groupings)]
-        self.write_reg(regs::CTRL_MEAS, 0b001_001_11).await?;
-        self.write_reg(regs::CTRL_HUM, 0b001).await?;
+        // `CONTROL_WRITES` carries the required order and the reason for it.
+        for (reg, value) in CONTROL_WRITES {
+            self.write_reg(reg, value).await?;
+        }
 
         let mut raw = [0u8; 38];
         self.read_regs(regs::CALIB_00, &mut raw).await?;

@@ -34,11 +34,10 @@ impl<I2C: embedded_hal::i2c::I2c> BME280<I2C> {
             return Err(Error::InvalidDevice);
         }
 
-        // Normal mode, temp and pressure oversampling x1. The 3/3/2 grouping
-        // mirrors CTRL_MEAS exactly: osrs_t[7:5], osrs_p[4:2], mode[1:0].
-        #[allow(clippy::unusual_byte_groupings)]
-        self.write_reg(regs::CTRL_MEAS, 0b001_001_11)?;
-        self.write_reg(regs::CTRL_HUM, 0b001)?;
+        // `CONTROL_WRITES` carries the required order and the reason for it.
+        for (reg, value) in crate::CONTROL_WRITES {
+            self.write_reg(reg, value)?;
+        }
 
         let mut raw = [0u8; 38];
         self.read_regs(regs::CALIB_00, &mut raw)?;
@@ -138,5 +137,101 @@ impl<I2C: embedded_hal::i2c::I2c> BME280<I2C> {
     pub fn read_regs(&mut self, reg: u8, buf: &mut [u8]) -> Result<(), Error<I2C::Error>> {
         self.i2c.write_read(self.addr, &[reg], buf)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use core::cell::RefCell;
+    use std::vec::Vec;
+
+    use embedded_hal::i2c::ErrorKind;
+
+    use super::*;
+    use crate::CONTROL_WRITES;
+
+    #[derive(Debug)]
+    struct MockError;
+
+    impl embedded_hal::i2c::Error for MockError {
+        fn kind(&self) -> ErrorKind {
+            ErrorKind::Other
+        }
+    }
+
+    /// An I2C bus that records every register write and answers reads with a
+    /// BME280 chip ID, so `init` can run without hardware.
+    #[derive(Default)]
+    struct RecordingI2c {
+        writes: RefCell<Vec<(u8, u8)>>,
+        reads: RefCell<Vec<u8>>,
+    }
+
+    impl embedded_hal::i2c::ErrorType for RecordingI2c {
+        type Error = MockError;
+    }
+
+    impl embedded_hal::i2c::I2c for RecordingI2c {
+        fn read(&mut self, _address: u8, read: &mut [u8]) -> Result<(), Self::Error> {
+            read.fill(0);
+            Ok(())
+        }
+
+        fn write(&mut self, _address: u8, write: &[u8]) -> Result<(), Self::Error> {
+            if let [reg, value] = write {
+                self.writes.borrow_mut().push((*reg, *value));
+            }
+            Ok(())
+        }
+
+        fn write_read(&mut self, _address: u8, write: &[u8], read: &mut [u8]) -> Result<(), Self::Error> {
+            let reg = write[0];
+            self.reads.borrow_mut().push(reg);
+            read.fill(0);
+            if reg == regs::CHIP_ID {
+                read[0] = CHIP_ID_BME280;
+            }
+            Ok(())
+        }
+
+        fn transaction(
+            &mut self,
+            _address: u8,
+            _operations: &mut [embedded_hal::i2c::Operation<'_>],
+        ) -> Result<(), Self::Error> {
+            unimplemented!("the driver does not use transactions")
+        }
+    }
+
+    /// The humidity oversampling register must be written before the
+    /// measurement control register.
+    ///
+    /// Bosch's BME280 API is explicit that "humidity related changes will be only
+    /// effective after a write operation to ctrl_meas register". This driver used
+    /// to write them the other way round, which meant `osrs_h` never left its
+    /// reset default (skipped) and humidity was never measured. This test fails
+    /// on that ordering.
+    #[test]
+    fn humidity_is_programmed_before_measurement() {
+        let mut sensor = BME280::new(RecordingI2c::default(), ADDRESS);
+        sensor.init().expect("init should succeed against the mock");
+
+        let writes = sensor.i2c.writes.borrow().clone();
+
+        let position = |reg: u8| {
+            writes
+                .iter()
+                .position(|(r, _)| *r == reg)
+                .unwrap_or_else(|| panic!("reg 0x{reg:02X} was never written; got {writes:02X?}"))
+        };
+
+        assert!(
+            position(regs::CTRL_HUM) < position(regs::CTRL_MEAS),
+            "CTRL_HUM (0xF2) must be written before CTRL_MEAS (0xF4), got {writes:02X?}"
+        );
+
+        // The whole documented sequence has to be emitted, not just the two
+        // registers above, and in the published order.
+        assert_eq!(writes, CONTROL_WRITES.to_vec(), "init wrote an unexpected sequence");
     }
 }
